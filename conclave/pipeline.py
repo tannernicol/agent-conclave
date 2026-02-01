@@ -37,6 +37,8 @@ class ConclavePipeline:
             max_file_mb=int(config.index.get("max_file_mb", 2)),
         )
         self.store = DecisionStore(config.data_dir)
+        self._audit: AuditLog | None = None
+        self._run_id: str | None = None
 
     def run(
         self,
@@ -47,6 +49,8 @@ class ConclavePipeline:
     ) -> PipelineResult:
         run_id = run_id or self.store.create_run(query, meta=meta)
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
+        self._audit = audit
+        self._run_id = run_id
         audit.log("mcp.available", {"servers": list(load_mcp_servers().keys())})
         audit.log("run.start", {"query": query, "meta": meta or {}})
         try:
@@ -100,6 +104,9 @@ class ConclavePipeline:
             self.store.fail_run(run_id, str(exc))
             audit.log("run.failed", {"error": str(exc)})
             raise
+        finally:
+            self._audit = None
+            self._run_id = None
 
     def _calibrate_models(self, run_id: str) -> None:
         calibration = self.config.calibration
@@ -180,14 +187,14 @@ class ConclavePipeline:
             "You are the reasoner. Provide a careful analysis and propose a decision.\n\n"
             f"Question: {query}\n\nContext:\n{context_blob}\n"
         )
-        reasoner_out = self._call_model(reasoner_model, analysis_prompt)
+        reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner")
 
         critic_prompt = (
             "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
             "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\n- ...\n\n"
             f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
         )
-        critic_out = self._call_model(critic_model, critic_prompt)
+        critic_out = self._call_model(critic_model, critic_prompt, role="critic")
         return {
             "reasoner": reasoner_out,
             "critic": critic_out,
@@ -205,7 +212,7 @@ class ConclavePipeline:
             f"Reasoner notes:\n{deliberation.get('reasoner', '')}\n\n"
             f"Critic notes:\n{deliberation.get('critic', '')}\n"
         )
-        summary = self._call_model(summarizer_model, summary_prompt)
+        summary = self._call_model(summarizer_model, summary_prompt, role="summarizer")
         fallback_used = False
         if not summary.strip():
             summary = self._fallback_summary(query, deliberation)
@@ -217,14 +224,51 @@ class ConclavePipeline:
             "fallback_used": fallback_used,
         }
 
-    def _call_model(self, model_id: Optional[str], prompt: str) -> str:
+    def _call_model(self, model_id: Optional[str], prompt: str, role: Optional[str] = None) -> str:
         if not model_id:
             return ""
         if model_id.startswith("ollama:"):
             model = model_id.split(":", 1)[1]
             result = self.ollama.generate(model, prompt, temperature=0.2)
+            self._record_model_observation(model_id, result)
+            audit = self._audit
+            run_id = self._run_id
+            payload = {
+                "role": role,
+                "model_id": model_id,
+                "ok": result.ok,
+                "duration_ms": round(result.duration_ms, 2),
+                "error": result.error,
+            }
+            if audit:
+                audit.log("model.call", payload)
+            if run_id:
+                self.store.append_event(run_id, {"phase": "model", **payload})
             return result.text
         return ""
+
+    def _record_model_observation(self, model_id: str, result: Any) -> None:
+        card = self.registry.get_model(model_id) or {}
+        prev_metrics = card.get("metrics", {})
+        prev_error = float(prev_metrics.get("error_rate", 0.0))
+        prev_timeout = float(prev_metrics.get("timeout_rate", 0.0))
+        decay = 0.8
+        error_rate = prev_error * decay
+        timeout_rate = prev_timeout * decay
+        if not result.ok:
+            error_rate = min(1.0, error_rate + 0.2)
+            if result.error and "timeout" in result.error.lower():
+                timeout_rate = min(1.0, timeout_rate + 0.2)
+        observation = {
+            "p50_latency_ms": round(result.duration_ms, 2),
+            "ok": result.ok,
+            "error_rate": round(error_rate, 4),
+            "timeout_rate": round(timeout_rate, 4),
+        }
+        try:
+            self.registry.update_metrics(model_id, observation)
+        except Exception:
+            pass
 
     def _format_context(self, context: Dict[str, Any]) -> str:
         lines = []

@@ -64,10 +64,10 @@ conclave/
   - role assignment + rationale
   - routing + collections
   - retrieval samples
+  - model invocations (role, model id, latency, ok/error)
   - deliberation disagreements
   - settlement and reconciliation
 
 ## Security & privacy
-- No paid API tokens by default
+- Local-only inference (Ollama), no paid API tokens by default
 - Explicit exclude patterns avoid secrets and media
-- Local-only inference (Ollama)

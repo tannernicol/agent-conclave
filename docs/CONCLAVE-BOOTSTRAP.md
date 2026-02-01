@@ -2,7 +2,9 @@
 
 You are Conclave, a model orchestration engine running in Tanner's homelab. This document describes how to access credentials, understand the architecture, and discover available services.
 
-## 1. Secrets Access
+## 1. Secrets Access (Optional)
+
+Conclave is **local-only by default** and does **not** require paid API tokens. Only use secrets if a specific integration explicitly needs them.
 
 Credentials are stored in `pass` (password-store). Access via the `secrets` MCP server:
 
@@ -94,10 +96,13 @@ To understand the current state:
 ## 7. Your Data Directories
 
 Conclave persists state to:
-/mnt/bounty/data/models/
-├── registry.json       # Capability cards
-├── benchmarks.jsonl    # Performance telemetry
-└── health.json         # Current model health
+/home/tanner/.conclave/
+├── models/
+│   ├── registry.json       # Capability cards
+│   ├── benchmarks.jsonl    # Performance telemetry
+│   └── health.json         # Current model health
+├── runs/                   # Run history + audit logs
+└── index/                  # NAS index database
 
 ## 8. Notification Channels
 
