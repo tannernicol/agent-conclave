@@ -233,16 +233,21 @@ class ConclavePipeline:
     def _extract_disagreements(self, critic: str) -> list[str]:
         lines = []
         capture = False
+        import re
+        numbered = re.compile(r"^\d+[\).]")
         for line in critic.splitlines():
             stripped = line.strip()
-            if stripped.lower().startswith("disagreements"):
+            lower = stripped.lower().lstrip("# ").strip()
+            if "disagreements" in lower:
                 capture = True
                 continue
             if capture:
-                if stripped.lower().startswith("gaps"):
+                if "gaps" in lower:
                     break
                 if stripped.startswith("-"):
                     lines.append(stripped.lstrip("- ").strip())
+                elif numbered.match(stripped):
+                    lines.append(numbered.sub("", stripped).strip())
         return lines
 
     def _maybe_refresh_index(self) -> None:
