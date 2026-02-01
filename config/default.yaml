@@ -2,12 +2,12 @@ server:
   host: 127.0.0.1
   port: 8099
 
-data_dir: /mnt/nas/Homelab/BugBounty/conclave
+data_dir: /home/tanner/.conclave
 
 models:
-  registry_path: /mnt/nas/Homelab/BugBounty/conclave/models/registry.json
-  benchmarks_path: /mnt/nas/Homelab/BugBounty/conclave/models/benchmarks.jsonl
-  health_path: /mnt/nas/Homelab/BugBounty/conclave/models/health.json
+  registry_path: /home/tanner/.conclave/models/registry.json
+  benchmarks_path: /home/tanner/.conclave/models/benchmarks.jsonl
+  health_path: /home/tanner/.conclave/models/health.json
   cards:
     - id: ollama:qwen2.5-coder:7b
       provider: ollama
@@ -106,6 +106,8 @@ rag:
 
 index:
   enabled: true
+  auto_build: false
+  auto_refresh_days: 7
   allowlist:
     - /mnt/nas/Homelab/Tax
     - /mnt/nas/Homelab/Health

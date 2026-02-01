@@ -24,7 +24,7 @@ Conclave is a V2 orchestration engine that produces a **versioned consensus deci
 6. **Persist**: run JSON + update latest pointer
 
 ## Storage layout
-Base directory: `/mnt/nas/Homelab/BugBounty/conclave`
+Base directory: `/home/tanner/.conclave`
 
 ```
 conclave/

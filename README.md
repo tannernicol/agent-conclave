@@ -38,10 +38,12 @@ python -m conclave.cli reconcile --topic tax-checkup
 - Local override: `~/.config/conclave/config.yaml`
 
 ## Data locations
-- Conclave state: `/mnt/nas/Homelab/BugBounty/conclave`
-- Model registry: `/mnt/nas/Homelab/BugBounty/conclave/models/registry.json`
-- Benchmarks: `/mnt/nas/Homelab/BugBounty/conclave/models/benchmarks.jsonl`
-- Runs: `/mnt/nas/Homelab/BugBounty/conclave/runs/`
+- Conclave state: `/home/tanner/.conclave`
+- Model registry: `/home/tanner/.conclave/models/registry.json`
+- Benchmarks: `/home/tanner/.conclave/models/benchmarks.jsonl`
+- Runs: `/home/tanner/.conclave/runs/`
+
+To move storage to NAS, override `data_dir` + model paths in `~/.config/conclave/config.yaml`.
 
 ## Systemd (optional)
 
@@ -60,6 +62,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - Use `config/default.yaml` to tune roles, RAG collections, and index paths.
 - Bounty can invoke Conclave by calling `conclave run --query ...` from its pipeline.
 - Each run writes `audit.jsonl` with routing, role assignments, and disagreements.
+- NAS index auto-build is off by default; run `conclave index` to build it.
 
 ## Tests (smoke + planner)
 

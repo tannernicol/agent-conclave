@@ -10,5 +10,5 @@ Key sections:
 - `models`: capability cards and defaults
 - `planner`: role weights + preferences
 - `rag`: homelab-search endpoint + default collections
-- `index`: NAS allowlist + exclude patterns
+- `index`: NAS allowlist + exclude patterns + auto_build/refresh
 - `topics`: scheduled re-run topics

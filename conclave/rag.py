@@ -146,6 +146,9 @@ class NasIndex:
         if not self.db_path.exists():
             return []
         results = []
+        safe_query = self._fts_query(query)
+        if not safe_query:
+            return results
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         sql = """
@@ -154,7 +157,7 @@ class NasIndex:
             FROM files
             WHERE files MATCH ?
         """
-        params = [query]
+        params = [safe_query]
         if extension:
             sql += " AND extension = ?"
             params.append(extension)
@@ -177,6 +180,11 @@ class NasIndex:
         finally:
             conn.close()
         return results
+
+    def _fts_query(self, query: str) -> str:
+        import re
+        tokens = re.findall(r"[A-Za-z0-9_]+", query)
+        return " ".join(tokens)
 
     def stats(self) -> dict:
         if not self.db_path.exists():

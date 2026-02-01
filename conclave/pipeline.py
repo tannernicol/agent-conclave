@@ -153,8 +153,10 @@ class ConclavePipeline:
         nas_results = []
         file_results = self.rag.search_files(query, limit=10)
         if self.config.index.get("enabled", True):
-            self._maybe_refresh_index()
-            nas_results = self.index.search(query, limit=10)
+            auto_build = bool(self.config.index.get("auto_build", False))
+            if self.index.db_path.exists() or auto_build:
+                self._maybe_refresh_index()
+                nas_results = self.index.search(query, limit=10)
         combined_files = file_results + nas_results
         return {"rag": rag_results, "nas": combined_files}
 
@@ -245,9 +247,14 @@ class ConclavePipeline:
 
     def _maybe_refresh_index(self) -> None:
         db_path = self.index.db_path
+        cfg = self.config.index
+        auto_build = bool(cfg.get("auto_build", False))
+        auto_refresh_days = cfg.get("auto_refresh_days", 0)
         if not db_path.exists():
-            self.index.index()
+            if auto_build:
+                self.index.index()
             return
-        age_seconds = time.time() - db_path.stat().st_mtime
-        if age_seconds > 7 * 24 * 3600:
-            self.index.index()
+        if auto_refresh_days:
+            age_seconds = time.time() - db_path.stat().st_mtime
+            if age_seconds > auto_refresh_days * 24 * 3600:
+                self.index.index()
