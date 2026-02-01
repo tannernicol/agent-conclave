@@ -100,7 +100,7 @@ class Planner:
                 if str(caps.get(key)).lower() not in {value, "high"}:
                     return False, f"capability {key} below {value}"
             else:
-                if caps.get(key) is not value:
+                if caps.get(key) != value:
                     return False, f"capability {key} != {value}"
         for key, value in constraint.items():
             if key not in caps:
@@ -109,7 +109,7 @@ class Planner:
                 if str(caps.get(key)).lower() not in {value, "high"}:
                     return False, f"constraint {key} below {value}"
             else:
-                if caps.get(key) is not value:
+                if caps.get(key) != value:
                     return False, f"constraint {key} != {value}"
         return True, ""
 

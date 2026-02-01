@@ -7,6 +7,10 @@ from typing import Any, Dict, List
 import json
 import time
 import uuid
+try:
+    import fcntl  # type: ignore
+except Exception:  # pragma: no cover - non-POSIX environments
+    fcntl = None
 
 
 @dataclass
@@ -38,35 +42,34 @@ class DecisionStore:
         return run_id
 
     def append_event(self, run_id: str, event: Dict[str, Any]) -> None:
-        run = self.get_run(run_id)
-        if not run:
-            return
-        run.setdefault("events", []).append({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            **event,
-        })
-        self._write_run(run_id, run)
+        def _update(run: Dict[str, Any]) -> Dict[str, Any]:
+            run.setdefault("events", []).append({
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                **event,
+            })
+            return run
+        self._locked_update(run_id, _update)
 
     def finalize_run(self, run_id: str, consensus: Dict[str, Any], artifacts: Dict[str, Any]) -> None:
-        run = self.get_run(run_id)
+        def _update(run: Dict[str, Any]) -> Dict[str, Any]:
+            run["status"] = "complete"
+            run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            run["consensus"] = consensus
+            run["artifacts"] = artifacts
+            return run
+        run = self._locked_update(run_id, _update)
         if not run:
             return
-        run["status"] = "complete"
-        run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        run["consensus"] = consensus
-        run["artifacts"] = artifacts
-        self._write_run(run_id, run)
         self._latest_path().parent.mkdir(parents=True, exist_ok=True)
         self._latest_path().write_text(json.dumps(run, indent=2))
 
     def fail_run(self, run_id: str, error: str) -> None:
-        run = self.get_run(run_id)
-        if not run:
-            return
-        run["status"] = "failed"
-        run["error"] = error
-        run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self._write_run(run_id, run)
+        def _update(run: Dict[str, Any]) -> Dict[str, Any]:
+            run["status"] = "failed"
+            run["error"] = error
+            run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            return run
+        self._locked_update(run_id, _update)
 
     def get_run(self, run_id: str) -> Dict[str, Any] | None:
         path = self._runs_dir() / run_id / "run.json"
@@ -104,3 +107,32 @@ class DecisionStore:
         run_dir.mkdir(parents=True, exist_ok=True)
         path = run_dir / "run.json"
         path.write_text(json.dumps(payload, indent=2))
+
+    def _locked_update(self, run_id: str, updater) -> Dict[str, Any] | None:
+        run_dir = self._runs_dir() / run_id
+        path = run_dir / "run.json"
+        if not path.exists():
+            return None
+        if fcntl is None:
+            run = self.get_run(run_id)
+            if not run:
+                return None
+            updated = updater(run)
+            self._write_run(run_id, updated)
+            return updated
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("r+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.seek(0)
+                data = handle.read()
+                if not data.strip():
+                    return None
+                run = json.loads(data)
+                updated = updater(run)
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps(updated, indent=2))
+                return updated
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

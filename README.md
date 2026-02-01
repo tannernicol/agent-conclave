@@ -65,6 +65,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - Bounty can invoke Conclave by calling `conclave run --query ...` from its pipeline.
 - Each run writes `audit.jsonl` with routing, role assignments, and disagreements.
 - Use `conclave schedule apply` to materialize systemd timers from topic schedules.
+- Add `--disable-legacy` to turn off the legacy `conclave-reconcile.timer`.
 - NAS index auto-build is off by default; run `conclave index` to build it.
 - MCP servers are detected from `~/.mcp.json` and logged into the audit trail.
 - RAG collections are discovered from `rag.tannner.com` and expanded by domain patterns.

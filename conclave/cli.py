@@ -104,12 +104,14 @@ def cmd_schedule(args: argparse.Namespace) -> None:
         _print({"topics": topics})
         return
     if args.schedule_cmd == "apply":
-        units = apply_schedule(
+        result = apply_schedule(
             config.topics,
             unit_dir=Path(args.unit_dir).expanduser(),
             enable=args.enable,
             reload_systemd=not args.no_reload,
             dry_run=args.dry_run,
+            validate=not args.no_validate,
+            disable_legacy=args.disable_legacy,
         )
         _print({
             "created": [
@@ -117,12 +119,17 @@ def cmd_schedule(args: argparse.Namespace) -> None:
                     "topic": unit.topic_id,
                     "service": str(unit.service_path),
                     "timer": str(unit.timer_path),
+                    "schedule": unit.schedule,
                 }
-                for unit in units
+                for unit in result["created"]
             ],
             "enabled": bool(args.enable),
             "dry_run": bool(args.dry_run),
+            "warnings": result["warnings"],
+            "errors": result["errors"],
         })
+        if result["errors"]:
+            raise SystemExit(1)
         return
 
 
@@ -162,6 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument("--enable", action="store_true")
     apply_cmd.add_argument("--no-reload", action="store_true")
     apply_cmd.add_argument("--dry-run", action="store_true")
+    apply_cmd.add_argument("--no-validate", action="store_true")
+    apply_cmd.add_argument("--disable-legacy", action="store_true")
 
     return parser
 

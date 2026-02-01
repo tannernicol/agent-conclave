@@ -44,6 +44,7 @@ conclave/
 - Weekly reconcile via systemd timer (`conclave-reconcile.timer`)
 - Manual re-run via CLI or UI always surfaces the latest pope
 - Topic schedules can be rendered into systemd timers via `conclave schedule apply`
+- When using per-topic timers, disable the legacy `conclave-reconcile.timer` to avoid duplicate runs
 
 ## Context sources
 - **homelab-search** (rag.tannner.com) for RAG collections

@@ -17,9 +17,9 @@ class ModelRegistry:
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "ModelRegistry":
-        registry_path = Path(config.get("registry_path", "/mnt/nas/Homelab/BugBounty/conclave/models/registry.json"))
-        benchmarks_path = Path(config.get("benchmarks_path", "/mnt/nas/Homelab/BugBounty/conclave/models/benchmarks.jsonl"))
-        health_path = Path(config.get("health_path", "/mnt/nas/Homelab/BugBounty/conclave/models/health.json"))
+        registry_path = Path(config.get("registry_path", "/home/tanner/.conclave/models/registry.json"))
+        benchmarks_path = Path(config.get("benchmarks_path", "/home/tanner/.conclave/models/benchmarks.jsonl"))
+        health_path = Path(config.get("health_path", "/home/tanner/.conclave/models/health.json"))
         cards = {card["id"]: card for card in config.get("cards", [])}
         instance = cls(registry_path, benchmarks_path, health_path, cards)
         instance._load_registry()

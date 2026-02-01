@@ -27,3 +27,5 @@ Each topic can include:
 - `enabled`: boolean (default true)
 
 Use `conclave schedule apply --enable` to create and enable user-level timers.
+Use `--disable-legacy` to disable the legacy `conclave-reconcile.timer`.
+Schedules are validated with `systemd-analyze calendar` unless `--no-validate` is set.
