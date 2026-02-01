@@ -1,0 +1,142 @@
+server:
+  host: 127.0.0.1
+  port: 8099
+
+data_dir: /mnt/nas/Homelab/BugBounty/conclave
+
+models:
+  registry_path: /mnt/nas/Homelab/BugBounty/conclave/models/registry.json
+  benchmarks_path: /mnt/nas/Homelab/BugBounty/conclave/models/benchmarks.jsonl
+  health_path: /mnt/nas/Homelab/BugBounty/conclave/models/health.json
+  cards:
+    - id: ollama:qwen2.5-coder:7b
+      provider: ollama
+      kind: local
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: low
+        tool_use: false
+        image_generation: false
+        image_understanding: none
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 900
+        p95_latency_ms: 3000
+        tokens_per_sec: 40
+    - id: ollama:qwen2.5-coder:32b
+      provider: ollama
+      kind: local
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: medium
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 1200
+        p95_latency_ms: 4000
+        tokens_per_sec: 35
+    - id: ollama:qwen2.5:32b
+      provider: ollama
+      kind: local
+      capabilities:
+        text_reasoning: true
+        code_generation: low
+        code_review: low
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 1300
+        p95_latency_ms: 4500
+        tokens_per_sec: 32
+
+planner:
+  prefer_local: true
+  prefer_best: false
+  weights:
+    latency: 0.35
+    reliability: 0.25
+    cost: 0.2
+    affinity: 0.2
+  role_affinity:
+    router: {speed: 1.0, reasoning: 0.4, json: 0.6}
+    explorer: {speed: 0.6, reasoning: 0.8, json: 0.4}
+    reasoner: {speed: 0.3, reasoning: 1.0, json: 0.5}
+    critic: {speed: 0.2, reasoning: 1.0, json: 0.8}
+    builder: {speed: 0.4, reasoning: 0.7, json: 0.6}
+    summarizer: {speed: 0.4, reasoning: 0.8, json: 0.7}
+
+rag:
+  base_url: http://localhost:8091
+  default_collections:
+    - homelab-rag
+    - claude-context
+    - notes
+    - prompts
+  domain_collections:
+    tax: [tax-rag, tax-data, homelab-rag]
+    health: [health-rag, health-data, homelab-rag]
+    bounty: [bounty-rag, bugbounty-rag, security-library]
+
+index:
+  enabled: true
+  allowlist:
+    - /mnt/nas/Homelab/Tax
+    - /mnt/nas/Homelab/Health
+    - /mnt/nas/Homelab/claude-context
+    - /mnt/nas/Homelab/BugBounty
+    - /mnt/nas/Homelab/Code
+  exclude_patterns:
+    - "**/.git/**"
+    - "**/node_modules/**"
+    - "**/venv/**"
+    - "**/__pycache__/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.password-store/**"
+    - "**/credentials/**"
+    - "**/keys/**"
+    - "/mnt/nas/Backups/**"
+    - "/mnt/nas/Media/**"
+    - "/mnt/nas/Multimedia/**"
+    - "/mnt/nas/Download/**"
+  max_file_mb: 2
+
+calibration:
+  enabled: true
+  max_seconds: 20
+  ping_prompt: "Return only: OK"
+
+topics:
+  - id: tax-checkup
+    query: "Summarize recent tax changes that affect me and highlight any action items."
+    collections: [tax-rag, tax-data]
+  - id: health-checkup
+    query: "Summarize the latest health data available and flag any anomalies or follow-ups."
+    collections: [health-rag, health-data]

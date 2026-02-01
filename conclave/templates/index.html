@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conclave</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <div class="sigil">C</div>
+        <div>
+          <h1>Conclave</h1>
+          <p>Locked doors. Honest debate. White smoke.</p>
+        </div>
+      </header>
+
+      <section class="panel">
+        <form id="query-form">
+          <label for="query">Pose a question</label>
+          <textarea id="query" name="query" rows="3" placeholder="Ask about tax, health, or a big decision..."></textarea>
+          <div class="actions">
+            <button type="submit">Summon the Cardinals</button>
+            <button type="button" id="rerun-latest">Re-run Latest</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="state">
+        <div class="door" id="door">
+          <div class="door-panel"></div>
+          <div class="door-handle"></div>
+          <div class="seal" id="seal">SEALED</div>
+          <div class="smoke" id="smoke"></div>
+        </div>
+        <div class="status" id="status">Awaiting deliberation.</div>
+      </section>
+
+      <section class="panel result">
+        <h2>Latest Pope</h2>
+        <div id="latest" class="latest">No consensus yet.</div>
+      </section>
+
+      <section class="panel timeline">
+        <h2>Recent Runs</h2>
+        <ul id="runs"></ul>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

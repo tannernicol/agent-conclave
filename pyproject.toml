@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conclave"
+version = "0.1.0"
+description = "Conclave model orchestration engine"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+conclave = "conclave.cli:main"
+
+[tool.setuptools]
+packages = ["conclave", "conclave.models"]

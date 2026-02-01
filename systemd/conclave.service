@@ -1,0 +1,12 @@
+[Unit]
+Description=Conclave API service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tanner/conclave
+ExecStart=/usr/bin/python3 -m conclave.server
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
