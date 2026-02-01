@@ -20,3 +20,10 @@ Key sections:
 - `max_results_per_collection`: cap results per collection
 - `prefer_non_pdf`: deprioritize PDF-heavy results
 - `dynamic_patterns`: include extra collections by keyword
+
+### Topics scheduling
+Each topic can include:
+- `schedule`: systemd `OnCalendar` string (e.g. `weekly`, `daily`, `Mon *-*-* 03:00:00`)
+- `enabled`: boolean (default true)
+
+Use `conclave schedule apply --enable` to create and enable user-level timers.

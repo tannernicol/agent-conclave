@@ -31,6 +31,8 @@ python -m conclave.cli run --query "Explain my latest health labs" --collection 
 python -m conclave.cli run --query "What did I file last year?" --collection tax-rag
 python -m conclave.cli runs latest
 python -m conclave.cli reconcile --topic tax-checkup
+python -m conclave.cli schedule list
+python -m conclave.cli schedule apply --enable
 ```
 
 ## Configuration
@@ -62,6 +64,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - Use `config/default.yaml` to tune roles, RAG collections, and index paths.
 - Bounty can invoke Conclave by calling `conclave run --query ...` from its pipeline.
 - Each run writes `audit.jsonl` with routing, role assignments, and disagreements.
+- Use `conclave schedule apply` to materialize systemd timers from topic schedules.
 - NAS index auto-build is off by default; run `conclave index` to build it.
 - MCP servers are detected from `~/.mcp.json` and logged into the audit trail.
 - RAG collections are discovered from `rag.tannner.com` and expanded by domain patterns.

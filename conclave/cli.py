@@ -11,6 +11,7 @@ from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.pipeline import ConclavePipeline
 from conclave.rag import NasIndex
+from conclave.scheduler import apply_schedule
 from conclave.store import DecisionStore
 
 
@@ -89,6 +90,42 @@ def cmd_index(args: argparse.Namespace) -> None:
     _print({"indexed": indexed})
 
 
+def cmd_schedule(args: argparse.Namespace) -> None:
+    config = get_config()
+    if args.schedule_cmd == "list":
+        topics = []
+        for topic in config.topics:
+            topics.append({
+                "id": topic.get("id"),
+                "schedule": topic.get("schedule", "weekly"),
+                "enabled": topic.get("enabled", True),
+                "collections": topic.get("collections", []),
+            })
+        _print({"topics": topics})
+        return
+    if args.schedule_cmd == "apply":
+        units = apply_schedule(
+            config.topics,
+            unit_dir=Path(args.unit_dir).expanduser(),
+            enable=args.enable,
+            reload_systemd=not args.no_reload,
+            dry_run=args.dry_run,
+        )
+        _print({
+            "created": [
+                {
+                    "topic": unit.topic_id,
+                    "service": str(unit.service_path),
+                    "timer": str(unit.timer_path),
+                }
+                for unit in units
+            ],
+            "enabled": bool(args.enable),
+            "dry_run": bool(args.dry_run),
+        })
+        return
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="conclave")
     sub = parser.add_subparsers(dest="command")
@@ -117,6 +154,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("index")
 
+    schedule = sub.add_parser("schedule")
+    schedule_sub = schedule.add_subparsers(dest="schedule_cmd")
+    schedule_sub.add_parser("list")
+    apply_cmd = schedule_sub.add_parser("apply")
+    apply_cmd.add_argument("--unit-dir", default="~/.config/systemd/user")
+    apply_cmd.add_argument("--enable", action="store_true")
+    apply_cmd.add_argument("--no-reload", action="store_true")
+    apply_cmd.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -135,6 +181,8 @@ def main() -> None:
         cmd_reconcile(args)
     elif args.command == "index":
         cmd_index(args)
+    elif args.command == "schedule":
+        cmd_schedule(args)
     else:
         parser.print_help()
 

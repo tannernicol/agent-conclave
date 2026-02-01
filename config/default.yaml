@@ -163,9 +163,12 @@ topics:
   - id: tax-checkup
     query: "Summarize recent tax changes that affect me and highlight any action items."
     collections: [tax-rag, tax-data]
+    schedule: weekly
   - id: health-checkup
     query: "Summarize the latest health data available and flag any anomalies or follow-ups."
     collections: [health-rag, health-data]
+    schedule: weekly
   - id: bounty-checkup
     query: "Summarize latest bounty learnings and propose high-leverage hunt ideas."
     collections: [bounty-rag, bugbounty-rag, security-library]
+    schedule: weekly

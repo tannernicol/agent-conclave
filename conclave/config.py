@@ -51,7 +51,7 @@ class Config:
 
     @property
     def data_dir(self) -> Path:
-        return Path(self.raw.get("data_dir", "/mnt/nas/Homelab/BugBounty/conclave"))
+        return Path(self.raw.get("data_dir", "/home/tanner/.conclave"))
 
     @property
     def models(self) -> Dict[str, Any]:
