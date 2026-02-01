@@ -196,10 +196,15 @@ class ConclavePipeline:
             f"Critic notes:\n{deliberation.get('critic', '')}\n"
         )
         summary = self._call_model(summarizer_model, summary_prompt)
+        fallback_used = False
+        if not summary.strip():
+            summary = self._fallback_summary(query, deliberation)
+            fallback_used = True
         return {
             "answer": summary.strip(),
             "confidence": self._extract_confidence(summary),
             "pope": summary.strip().splitlines()[0] if summary.strip() else "",
+            "fallback_used": fallback_used,
         }
 
     def _call_model(self, model_id: Optional[str], prompt: str) -> str:
@@ -229,6 +234,31 @@ class ConclavePipeline:
         if "confidence" in lower:
             return "medium"
         return "medium"
+
+    def _fallback_summary(self, query: str, deliberation: Dict[str, Any]) -> str:
+        disagreements = deliberation.get("disagreements", [])
+        critic = deliberation.get("critic", "")
+        reasoner = deliberation.get("reasoner", "")
+        lines = [
+            "**Fallback Consensus Answer:**",
+            "",
+            f"- **Query**: {query}",
+            "",
+            "**Reasoner Draft:**",
+            reasoner.strip() or "No reasoner output.",
+            "",
+            "**Critic Disagreements:**",
+        ]
+        if disagreements:
+            for item in disagreements[:5]:
+                lines.append(f"- {item}")
+        elif critic.strip():
+            lines.append(critic.strip()[:800])
+        else:
+            lines.append("No critic output.")
+        lines.append("")
+        lines.append("**Confidence Level**: Low")
+        return "\n".join(lines)
 
     def _extract_disagreements(self, critic: str) -> list[str]:
         lines = []

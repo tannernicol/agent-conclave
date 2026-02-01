@@ -100,7 +100,14 @@ class NasIndex:
             if not base.exists():
                 continue
             for root, dirs, files in os.walk(base):
-                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                root_path = Path(root)
+                if self._excluded(root_path):
+                    dirs[:] = []
+                    continue
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith('.') and not self._excluded(root_path / d)
+                ]
                 for name in files:
                     if name.startswith('.'):
                         continue

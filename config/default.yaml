@@ -109,11 +109,9 @@ index:
   auto_build: false
   auto_refresh_days: 7
   allowlist:
-    - /mnt/nas/Homelab/Tax
-    - /mnt/nas/Homelab/Health
-    - /mnt/nas/Homelab/claude-context
-    - /mnt/nas/Homelab/BugBounty
-    - /mnt/nas/Homelab/Code
+    - /mnt/nas/Homelab
+    - /mnt/nas/Public
+    - /mnt/nas/files
   exclude_patterns:
     - "**/.git/**"
     - "**/node_modules/**"
@@ -128,6 +126,14 @@ index:
     - "/mnt/nas/Media/**"
     - "/mnt/nas/Multimedia/**"
     - "/mnt/nas/Download/**"
+    - "/mnt/nas/Homelab/Backups/**"
+    - "/mnt/nas/Homelab/Media/**"
+    - "/mnt/nas/Homelab/Multimedia/**"
+    - "/mnt/nas/Homelab/Download/**"
+    - "/mnt/nas/Homelab/Photos/**"
+    - "/mnt/nas/Homelab/Docker/**"
+    - "/mnt/nas/Homelab/Container/**"
+    - "/mnt/nas/Homelab/homelab-backup/**"
   max_file_mb: 2
 
 calibration:
