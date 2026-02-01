@@ -16,10 +16,12 @@ import httpx
 class RagClient:
     base_url: str
 
-    def search(self, query: str, collection: Optional[str] = None, limit: int = 20) -> list[dict]:
+    def search(self, query: str, collection: Optional[str] = None, limit: int = 20, semantic: bool | None = None) -> list[dict]:
         params = {"q": query, "limit": limit}
         if collection:
             params["collection"] = collection
+        if semantic is not None:
+            params["semantic"] = str(semantic).lower()
         try:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.get(f"{self.base_url}/api/rag/search", params=params)

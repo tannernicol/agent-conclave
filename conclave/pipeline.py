@@ -13,6 +13,7 @@ from conclave.models.ollama import OllamaClient
 from conclave.rag import RagClient, NasIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
+from conclave.mcp import load_mcp_servers
 
 
 @dataclass
@@ -46,6 +47,7 @@ class ConclavePipeline:
     ) -> PipelineResult:
         run_id = run_id or self.store.create_run(query, meta=meta)
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
+        audit.log("mcp.available", {"servers": list(load_mcp_servers().keys())})
         audit.log("run.start", {"query": query, "meta": meta or {}})
         try:
             self.store.append_event(run_id, {"phase": "preflight", "status": "start"})
@@ -135,7 +137,8 @@ class ConclavePipeline:
             domain = "health"
         if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
             domain = "bounty"
-        selected = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
+        base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
+        selected, catalog = self._expand_collections(domain, base)
         roles = ["router", "reasoner", "critic", "summarizer"]
         plan_with_rationale = self.planner.plan_with_rationale(roles, self.registry.list_models())
         return {
@@ -144,12 +147,17 @@ class ConclavePipeline:
             "roles": roles,
             "plan": plan_with_rationale["assignments"],
             "rationale": plan_with_rationale["rationale"],
+            "rag_catalog": catalog,
         }
 
     def _retrieve_context(self, query: str, route: Dict[str, Any]) -> Dict[str, Any]:
         rag_results: List[Dict[str, Any]] = []
+        rag_cfg = self.config.rag
+        max_per_collection = int(rag_cfg.get("max_results_per_collection", 8))
+        prefer_non_pdf = bool(rag_cfg.get("prefer_non_pdf", False))
+        semantic = rag_cfg.get("semantic")
         for coll in route.get("collections", []):
-            rag_results.extend(self.rag.search(query, collection=coll, limit=10))
+            rag_results.extend(self.rag.search(query, collection=coll, limit=max_per_collection, semantic=semantic))
         nas_results = []
         file_results = self.rag.search_files(query, limit=10)
         if self.config.index.get("enabled", True):
@@ -158,6 +166,8 @@ class ConclavePipeline:
                 self._maybe_refresh_index()
                 nas_results = self.index.search(query, limit=10)
         combined_files = file_results + nas_results
+        if prefer_non_pdf:
+            rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
         return {"rag": rag_results, "nas": combined_files}
 
     def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
@@ -279,6 +289,36 @@ class ConclavePipeline:
                 elif numbered.match(stripped):
                     lines.append(numbered.sub("", stripped).strip())
         return lines
+
+    def _expand_collections(self, domain: str, base: List[str]) -> tuple[List[str], Dict[str, Any]]:
+        rag_cfg = self.config.rag
+        use_server = bool(rag_cfg.get("use_server_collections", True))
+        skip_empty = bool(rag_cfg.get("skip_empty_collections", True))
+        patterns = rag_cfg.get("dynamic_patterns", {}).get(domain, [])
+        catalog = {"server": [], "selected": []}
+        if not use_server:
+            return list(dict.fromkeys(base)), catalog
+        server = self.rag.collections()
+        catalog["server"] = server
+        available = {}
+        for item in server:
+            name = item.get("name")
+            if not name:
+                continue
+            if skip_empty and not item.get("exists"):
+                continue
+            if skip_empty and item.get("file_count", 0) == 0:
+                continue
+            available[name] = item
+        selected = list(dict.fromkeys([c for c in base if c in available or not skip_empty]))
+        if patterns:
+            for name, meta in available.items():
+                blob = f"{name} {meta.get('description','')}".lower()
+                if any(pat in blob for pat in patterns):
+                    if name not in selected:
+                        selected.append(name)
+        catalog["selected"] = selected
+        return selected, catalog
 
     def _maybe_refresh_index(self) -> None:
         db_path = self.index.db_path

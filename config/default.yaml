@@ -94,6 +94,10 @@ planner:
 
 rag:
   base_url: http://localhost:8091
+  use_server_collections: true
+  skip_empty_collections: true
+  max_results_per_collection: 8
+  prefer_non_pdf: true
   default_collections:
     - homelab-rag
     - claude-context
@@ -103,6 +107,20 @@ rag:
     tax: [tax-rag, tax-data, homelab-rag]
     health: [health-rag, health-data, homelab-rag]
     bounty: [bounty-rag, bugbounty-rag, security-library]
+  dynamic_patterns:
+    bounty:
+      - "bounty"
+      - "security"
+      - "smart"
+      - "crypto"
+    health:
+      - "health"
+      - "medical"
+      - "genetic"
+    tax:
+      - "tax"
+      - "irs"
+      - "finance"
 
 index:
   enabled: true

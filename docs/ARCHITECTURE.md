@@ -47,6 +47,12 @@ conclave/
 ## Context sources
 - **homelab-search** (rag.tannner.com) for RAG collections
 - **NAS index** from an allowlist (with explicit exclusions)
+- **MCP registry** detected from `~/.mcp.json` (logged; no tool calls by default)
+
+### RAG discovery
+- Pulls collection catalog from rag.tannner.com
+- Filters empty collections
+- Adds domain-specific collections by keyword patterns
 
 ## UI states
 - **Locked doors** during deliberation
