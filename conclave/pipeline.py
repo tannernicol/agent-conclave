@@ -12,6 +12,7 @@ from conclave.models.planner import Planner
 from conclave.models.ollama import OllamaClient
 from conclave.rag import RagClient, NasIndex
 from conclave.store import DecisionStore
+from conclave.audit import AuditLog
 
 
 @dataclass
@@ -44,21 +45,36 @@ class ConclavePipeline:
         run_id: Optional[str] = None,
     ) -> PipelineResult:
         run_id = run_id or self.store.create_run(query, meta=meta)
+        audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
+        audit.log("run.start", {"query": query, "meta": meta or {}})
         try:
             self.store.append_event(run_id, {"phase": "preflight", "status": "start"})
             self._calibrate_models(run_id)
+            audit.log("preflight.complete")
 
             self.store.append_event(run_id, {"phase": "route", "status": "start"})
             route = self._route_query(query, collections)
             self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route})
+            audit.log("route.decided", route)
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
             context = self._retrieve_context(query, route)
             self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"])}})
+            audit.log("retrieve.complete", {
+                "rag_count": len(context["rag"]),
+                "nas_count": len(context["nas"]),
+                "rag_samples": context["rag"][:3],
+                "nas_samples": context["nas"][:3],
+            })
 
             self.store.append_event(run_id, {"phase": "deliberate", "status": "start"})
             deliberation = self._deliberate(query, context, route)
             self.store.append_event(run_id, {"phase": "deliberate", "status": "done"})
+            audit.log("deliberate.complete", {
+                "reasoner": deliberation.get("reasoner", ""),
+                "critic": deliberation.get("critic", ""),
+                "disagreements": deliberation.get("disagreements", []),
+            })
 
             consensus = self._summarize(query, context, deliberation, route)
             previous = self.store.latest()
@@ -73,9 +89,14 @@ class ConclavePipeline:
                 "reconcile": reconcile,
             }
             self.store.finalize_run(run_id, consensus, artifacts)
+            audit.log("settlement.complete", {
+                "consensus": consensus,
+                "reconcile": reconcile,
+            })
             return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
         except Exception as exc:
             self.store.fail_run(run_id, str(exc))
+            audit.log("run.failed", {"error": str(exc)})
             raise
 
     def _calibrate_models(self, run_id: str) -> None:
@@ -116,12 +137,13 @@ class ConclavePipeline:
             domain = "bounty"
         selected = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
         roles = ["router", "reasoner", "critic", "summarizer"]
-        plan = self.planner.choose_models_for_roles(roles, self.registry.list_models())
+        plan_with_rationale = self.planner.plan_with_rationale(roles, self.registry.list_models())
         return {
             "domain": domain,
             "collections": selected,
             "roles": roles,
-            "plan": plan,
+            "plan": plan_with_rationale["assignments"],
+            "rationale": plan_with_rationale["rationale"],
         }
 
     def _retrieve_context(self, query: str, route: Dict[str, Any]) -> Dict[str, Any]:
@@ -149,11 +171,16 @@ class ConclavePipeline:
         reasoner_out = self._call_model(reasoner_model, analysis_prompt)
 
         critic_prompt = (
-            "You are the critic. Challenge the reasoning, list gaps, and suggest fixes.\n\n"
+            "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
+            "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\n- ...\n\n"
             f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
         )
         critic_out = self._call_model(critic_model, critic_prompt)
-        return {"reasoner": reasoner_out, "critic": critic_out}
+        return {
+            "reasoner": reasoner_out,
+            "critic": critic_out,
+            "disagreements": self._extract_disagreements(critic_out),
+        }
 
     def _summarize(self, query: str, context: Dict[str, Any], deliberation: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
@@ -200,6 +227,21 @@ class ConclavePipeline:
         if "confidence" in lower:
             return "medium"
         return "medium"
+
+    def _extract_disagreements(self, critic: str) -> list[str]:
+        lines = []
+        capture = False
+        for line in critic.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("disagreements"):
+                capture = True
+                continue
+            if capture:
+                if stripped.lower().startswith("gaps"):
+                    break
+                if stripped.startswith("-"):
+                    lines.append(stripped.lstrip("- ").strip())
+        return lines
 
     def _maybe_refresh_index(self) -> None:
         db_path = self.index.db_path

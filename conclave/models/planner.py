@@ -37,46 +37,87 @@ class Planner:
         registry: list[Dict[str, Any]],
         role_constraints: Dict[str, Dict[str, Any]] | None = None,
     ) -> Dict[str, str]:
+        plan = self.plan_with_rationale(roles, registry, role_constraints=role_constraints)
+        return plan["assignments"]
+
+    def plan_with_rationale(
+        self,
+        roles: list[str],
+        registry: list[Dict[str, Any]],
+        role_constraints: Dict[str, Dict[str, Any]] | None = None,
+        top_n: int = 5,
+    ) -> Dict[str, Any]:
         assignments: Dict[str, str] = {}
+        rationale: Dict[str, Any] = {}
         constraints = role_constraints or {}
         for role in roles:
+            candidates = []
             best_model = None
             best_score = -1.0
             for card in registry:
-                if not self._satisfies(role, card, constraints.get(role, {})):
+                ok, reason = self._check_requirements(role, card, constraints.get(role, {}))
+                if not ok:
+                    candidates.append({
+                        "id": card.get("id"),
+                        "eligible": False,
+                        "reason": reason,
+                    })
                     continue
-                score = self._score(role, card)
+                score, details = self._score_with_details(role, card)
+                candidates.append({
+                    "id": card.get("id"),
+                    "eligible": True,
+                    "score": score,
+                    "details": details,
+                })
                 if score > best_score:
                     best_score = score
                     best_model = card.get("id")
             if best_model:
                 assignments[role] = best_model
-        return assignments
+            # keep top scores first
+            eligible = [c for c in candidates if c.get("eligible")]
+            eligible.sort(key=lambda x: x.get("score", 0), reverse=True)
+            ineligible = [c for c in candidates if not c.get("eligible")]
+            rationale[role] = {
+                "selected": best_model,
+                "weights": self.weights,
+                "preferences": {
+                    "prefer_local": self.prefer_local,
+                    "prefer_best": self.prefer_best,
+                },
+                "candidates": eligible[:top_n] + ineligible[:top_n],
+            }
+        return {"assignments": assignments, "rationale": rationale}
 
-    def _satisfies(self, role: str, card: Dict[str, Any], constraint: Dict[str, Any]) -> bool:
+    def _check_requirements(self, role: str, card: Dict[str, Any], constraint: Dict[str, Any]) -> tuple[bool, str]:
         caps = card.get("capabilities", {})
         reqs = ROLE_REQUIREMENTS.get(role, {})
         for key, value in reqs.items():
             if key not in caps:
-                return False
+                return False, f"missing capability: {key}"
             if isinstance(value, str):
                 if str(caps.get(key)).lower() not in {value, "high"}:
-                    return False
+                    return False, f"capability {key} below {value}"
             else:
                 if caps.get(key) is not value:
-                    return False
+                    return False, f"capability {key} != {value}"
         for key, value in constraint.items():
             if key not in caps:
-                return False
+                return False, f"constraint missing: {key}"
             if isinstance(value, str):
                 if str(caps.get(key)).lower() not in {value, "high"}:
-                    return False
+                    return False, f"constraint {key} below {value}"
             else:
                 if caps.get(key) is not value:
-                    return False
-        return True
+                    return False, f"constraint {key} != {value}"
+        return True, ""
 
     def _score(self, role: str, card: Dict[str, Any]) -> float:
+        score, _ = self._score_with_details(role, card)
+        return score
+
+    def _score_with_details(self, role: str, card: Dict[str, Any]) -> tuple[float, Dict[str, Any]]:
         weights = self.weights or {"latency": 0.35, "reliability": 0.25, "cost": 0.2, "affinity": 0.2}
         metrics = card.get("metrics", {})
         baseline = card.get("perf_baseline", {})
@@ -96,11 +137,24 @@ class Planner:
             + weights.get("affinity", 0.2) * affinity_score
         )
 
+        multiplier = 1.0
         if self.prefer_local and card.get("kind") == "local":
-            score *= 1.05
+            multiplier *= 1.05
         if self.prefer_best and card.get("capabilities", {}).get("json_reliability") == "high":
-            score *= 1.05
-        return score
+            multiplier *= 1.05
+        score *= multiplier
+
+        details = {
+            "latency_ms": latency_ms,
+            "latency_score": round(latency_score, 4),
+            "reliability": round(reliability, 4),
+            "cost": cost,
+            "cost_score": round(cost_score, 4),
+            "affinity_score": round(affinity_score, 4),
+            "multiplier": round(multiplier, 4),
+            "final_score": round(score, 4),
+        }
+        return score, details
 
     def _affinity(self, role: str, card: Dict[str, Any]) -> float:
         caps = card.get("capabilities", {})

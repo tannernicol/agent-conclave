@@ -59,6 +59,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - Conclave can query homelab-search (`rag.tannner.com`) when available.
 - Use `config/default.yaml` to tune roles, RAG collections, and index paths.
 - Bounty can invoke Conclave by calling `conclave run --query ...` from its pipeline.
+- Each run writes `audit.jsonl` with routing, role assignments, and disagreements.
 
 ## Tests (smoke + planner)
 

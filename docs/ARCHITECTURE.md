@@ -34,6 +34,7 @@ conclave/
 │   └── health.json
 ├── runs/
 │   └── <run_id>/run.json
+│   └── <run_id>/audit.jsonl
 ├── latest.json
 └── index/
     └── nas_index.db
@@ -51,6 +52,14 @@ conclave/
 - **Locked doors** during deliberation
 - **White smoke** when consensus is reached
 - **Latest pope** always shown in the main panel
+
+## Audit trail
+- Each pipeline run writes `audit.jsonl` with step-by-step decisions:
+  - role assignment + rationale
+  - routing + collections
+  - retrieval samples
+  - deliberation disagreements
+  - settlement and reconciliation
 
 ## Security & privacy
 - No paid API tokens by default

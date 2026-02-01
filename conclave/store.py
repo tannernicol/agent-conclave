@@ -16,6 +16,9 @@ class DecisionStore:
     def _runs_dir(self) -> Path:
         return self.data_dir / "runs"
 
+    def run_dir(self, run_id: str) -> Path:
+        return self._runs_dir() / run_id
+
     def _latest_path(self) -> Path:
         return self.data_dir / "latest.json"
 
