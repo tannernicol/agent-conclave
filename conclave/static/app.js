@@ -2,6 +2,7 @@ const statusEl = document.getElementById('status');
 const smokeEl = document.getElementById('smoke');
 const latestEl = document.getElementById('latest');
 const latestTimeEl = document.getElementById('latest-time');
+const latestPromptEl = document.getElementById('latest-prompt');
 const runsEl = document.getElementById('run-rows');
 const form = document.getElementById('query-form');
 const rerunBtn = document.getElementById('rerun-latest');
@@ -175,6 +176,53 @@ function formatTime(value) {
   return parsed.toLocaleString();
 }
 
+function extractRecommendations(text, limit = 6) {
+  if (!text) return [];
+  const lines = text.split('\n');
+  const recs = [];
+  let inSection = false;
+  let sectionFound = false;
+  const sectionKeys = ['recommend', 'schedule', 'allocation', 'plan', 'summary', 'daily'];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const lower = line.toLowerCase();
+    if (line.startsWith('#')) {
+      if (sectionKeys.some((key) => lower.includes(key))) {
+        inSection = true;
+        sectionFound = true;
+        continue;
+      }
+      if (sectionFound && inSection) break;
+      continue;
+    }
+    const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
+    const numMatch = line.match(/^\d+\.\s+(.*)$/);
+    if (bulletMatch) {
+      recs.push(bulletMatch[1]);
+    } else if (numMatch) {
+      recs.push(numMatch[1]);
+    } else if (line.includes('|') && !line.includes('---')) {
+      const parts = line.split('|').map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 3 && parts[0] !== 'Time') {
+        recs.push(`${parts[0]} — ${parts[1]} (${parts[2]})`);
+      }
+    } else if (!sectionFound && recs.length < 2) {
+      recs.push(line);
+    }
+    if (recs.length >= limit) break;
+  }
+  return recs;
+}
+
+function renderRecommendations(text) {
+  const recs = extractRecommendations(text);
+  if (!recs.length) {
+    return '<div class="empty-state">No recommendations yet.</div>';
+  }
+  return `<ul class="output-list">${recs.map((item) => `<li>${renderInline(escapeHtml(item))}</li>`).join('')}</ul>`;
+}
+
 function summarizeEvent(event) {
   const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
   const phase = event.phase || event.event || 'event';
@@ -188,12 +236,17 @@ function summarizeEvent(event) {
   return `${time} ${phase}${detail ? ` · ${detail}` : ''}`.trim();
 }
 
-function renderLogs(events) {
+function renderLogs(events, outputText) {
   if (!events || !events.length) {
     return '<div class="empty-state">No logs yet.</div>';
   }
   const items = events.slice(-10).map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
-  return `<ul class="log-list">${items}</ul>`;
+  let detail = '';
+  if (outputText) {
+    const detailText = outputText.length > 1200 ? `${outputText.slice(0, 1200)}…` : outputText;
+    detail = `<div class="log-detail markdown">${renderMarkdown(detailText)}</div>`;
+  }
+  return `<ul class="log-list">${items}</ul>${detail}`;
 }
 
 function resolveTitle(run) {
@@ -207,10 +260,16 @@ function renderLatest(latest) {
   if (!latest || !latest.consensus) {
     latestEl.innerHTML = '<div class="empty-state">No consensus yet.</div>';
     latestTimeEl.textContent = '—';
+    if (latestPromptEl) latestPromptEl.textContent = 'Prompt: —';
     return;
   }
-  latestEl.innerHTML = renderMarkdown(latest.consensus.answer || '');
+  latestEl.innerHTML = renderRecommendations(latest.consensus.answer || '');
   latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
+  if (latestPromptEl) {
+    const prompt = latest.query || '—';
+    const input = latest.meta && latest.meta.input_title ? ` | Input: ${latest.meta.input_title}` : '';
+    latestPromptEl.textContent = `Prompt: ${prompt}${input}`;
+  }
 }
 
 function renderRuns(runs) {
@@ -225,15 +284,19 @@ function renderRuns(runs) {
     const title = resolveTitle(run);
     const status = run.status || 'unknown';
     const output = run.consensus && run.consensus.answer ? run.consensus.answer : run.error || 'No output.';
+    const inputInfo = run.meta && run.meta.input_title ? run.meta.input_title : (run.meta && run.meta.input_path ? run.meta.input_path.split('/').pop() : '—');
     row.innerHTML = `
       <div class="cell cell-title">
         ${escapeHtml(title)}
         <div class="ui-chip run-chip">${escapeHtml(status)}</div>
         <div class="ui-dim ui-mono run-id">${escapeHtml(run.id || '')}</div>
       </div>
-      <div class="cell cell-prompt">${escapeHtml(run.query || '')}</div>
-      <div class="cell">${renderLogs(run.events || [])}</div>
-      <div class="cell markdown">${renderMarkdown(output)}</div>
+      <div class="cell cell-prompt">
+        ${escapeHtml(run.query || '')}
+        <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)}</div>
+      </div>
+      <div class="cell">${renderLogs(run.events || [], output)}</div>
+      <div class="cell markdown">${renderRecommendations(output)}</div>
       <div class="cell cell-time ui-mono">${formatTime(run.completed_at || run.created_at)}</div>
     `;
     runsEl.appendChild(row);
