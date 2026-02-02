@@ -36,7 +36,9 @@ class ModelRegistry:
             for model_id, stored in data.get("models", {}).items():
                 if model_id in self.cards:
                     merged = dict(self.cards[model_id])
-                    merged.update(stored)
+                    for key in ("metrics", "perf_baseline", "cost"):
+                        if key in stored:
+                            merged[key] = stored[key]
                     self.cards[model_id] = merged
                 else:
                     self.cards[model_id] = stored

@@ -88,7 +88,7 @@ models:
         - --output-format
         - text
         - --model
-        - opus-4.5
+        - opus
         - --no-session-persistence
       prompt_mode: arg
       timeout_seconds: 120

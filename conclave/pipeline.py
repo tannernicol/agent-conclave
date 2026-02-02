@@ -17,6 +17,7 @@ from conclave.rag import RagClient, NasIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
 from conclave.mcp import load_mcp_servers
+from conclave.mcp_bridge import MCPBridge
 from conclave.sources import HealthDashboardClient, MoneyClient
 
 
@@ -51,9 +52,13 @@ class ConclavePipeline:
             max_file_mb=int(config.index.get("max_file_mb", 2)),
         )
         self.store = DecisionStore(config.data_dir)
+        self.mcp = MCPBridge()
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
         self._context_char_limit: int | None = None
+        self._calibration_cache: Dict[str, Dict[str, Any]] = {}
+        self._calibration_cache_time: float = 0.0
+        self._calibration_cache_ttl: float = 300.0  # 5 minutes
         self.logger = logging.getLogger(__name__)
 
     def run(
@@ -189,6 +194,10 @@ class ConclavePipeline:
                 "consensus": consensus,
                 "reconcile": reconcile,
             })
+
+            # Log to memory MCP for cross-session learning
+            self._log_to_memory(query, route, consensus, quality)
+
             return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
         except Exception as exc:
             self.store.fail_run(run_id, str(exc))
@@ -198,19 +207,48 @@ class ConclavePipeline:
             self._audit = None
             self._run_id = None
             self._context_char_limit = None
+            # Close MCP connections
+            try:
+                self.mcp.close_all()
+            except Exception:
+                pass
 
     def _calibrate_models(self, run_id: str) -> None:
         calibration = self.config.calibration
         if not calibration.get("enabled", True):
             return
+
+        # Check cache - skip calibration if recent enough
+        now = time.time()
+        if self._calibration_cache and (now - self._calibration_cache_time) < self._calibration_cache_ttl:
+            # Apply cached metrics
+            for model_id, observation in self._calibration_cache.items():
+                try:
+                    self.registry.update_metrics(model_id, observation)
+                except Exception:
+                    pass
+            self.store.append_event(run_id, {"phase": "calibration", "status": "cached", "models": len(self._calibration_cache)})
+            return
+
+        # Get role-overridden models to skip (they're always used regardless)
+        role_overrides = set((self.config.planner.get("role_overrides") or {}).values())
+
         providers = calibration.get("providers") or ["ollama"]
         max_seconds = float(calibration.get("max_seconds", 20))
         prompt = calibration.get("ping_prompt", "Return only: OK")
         start = time.perf_counter()
+        new_cache: Dict[str, Dict[str, Any]] = {}
+
         for card in self.registry.list_models():
             if time.perf_counter() - start > max_seconds:
                 break
             model_id = card.get("id", "")
+
+            # Skip role-overridden models - they're always used regardless of calibration
+            if model_id in role_overrides:
+                self.store.append_event(run_id, {"phase": "calibration", "model": model_id, "skipped": "role_override"})
+                continue
+
             provider = str(card.get("provider") or model_id.split(":", 1)[0])
             if provider not in providers:
                 continue
@@ -227,11 +265,16 @@ class ConclavePipeline:
                 "error_rate": 0.0 if result.ok else 1.0,
                 "timeout_rate": 0.0,
             }
+            new_cache[model_id] = observation
             try:
                 self.registry.update_metrics(model_id, observation)
             except Exception:
                 pass
             self.store.append_event(run_id, {"phase": "calibration", "model": model_id, "ok": result.ok})
+
+        # Update cache
+        self._calibration_cache = new_cache
+        self._calibration_cache_time = now
 
     def _route_query(self, query: str, collections: Optional[List[str]]) -> Dict[str, Any]:
         q = query.lower()
@@ -302,12 +345,68 @@ class ConclavePipeline:
             }]
         source_items: List[Dict[str, Any]] = []
         source_errors: List[Dict[str, Any]] = []
+        mcp_results: Dict[str, Any] = {}
+
         if route.get("domain") == "health":
             source_items.extend(self.health_source.fetch())
             source_errors.extend(self.health_source.drain_errors())
+
         if route.get("domain") == "money":
-            source_items.extend(self.money_source.fetch())
-            source_errors.extend(self.money_source.drain_errors())
+            # Try MCP first, fallback to direct HTTP
+            mcp_summary = self.mcp.money_summary()
+            mcp_spending = self.mcp.money_spending()
+            if mcp_summary.ok:
+                mcp_results["money_summary"] = mcp_summary.result
+                source_items.append({
+                    "path": "mcp://money/summary",
+                    "title": "Financial Summary (MCP)",
+                    "snippet": str(mcp_summary.result)[:1200],
+                    "collection": "money-mcp",
+                    "source": "mcp",
+                })
+            if mcp_spending.ok:
+                mcp_results["money_spending"] = mcp_spending.result
+                source_items.append({
+                    "path": "mcp://money/spending",
+                    "title": "Current Spending (MCP)",
+                    "snippet": str(mcp_spending.result)[:1200],
+                    "collection": "money-mcp",
+                    "source": "mcp",
+                })
+            # Fallback to HTTP if MCP failed
+            if not mcp_summary.ok and not mcp_spending.ok:
+                source_items.extend(self.money_source.fetch())
+                source_errors.extend(self.money_source.drain_errors())
+            elif not mcp_summary.ok:
+                source_errors.append({"action": "mcp:money_summary", "error": mcp_summary.error})
+            elif not mcp_spending.ok:
+                source_errors.append({"action": "mcp:money_spending", "error": mcp_spending.error})
+
+        if route.get("domain") == "bounty":
+            # Query bounty-training MCP for relevant patterns and techniques
+            bounty_rag = self.mcp.bounty_rag_query(query, limit=5)
+            if bounty_rag.ok and bounty_rag.result:
+                mcp_results["bounty_rag"] = bounty_rag.result
+                source_items.append({
+                    "path": "mcp://bounty-training/rag",
+                    "title": "Bounty RAG Patterns",
+                    "snippet": str(bounty_rag.result)[:1500],
+                    "collection": "bounty-mcp",
+                    "source": "mcp",
+                })
+
+            # Semantic search for similar vulnerabilities
+            semantic = self.mcp.bounty_semantic_search(query, top_k=3)
+            if semantic.ok and semantic.result:
+                mcp_results["bounty_semantic"] = semantic.result
+                source_items.append({
+                    "path": "mcp://bounty-training/semantic",
+                    "title": "Similar Vulnerabilities",
+                    "snippet": str(semantic.result)[:1200],
+                    "collection": "bounty-mcp",
+                    "source": "mcp",
+                })
+
         if route.get("domain") == "bounty" and user_inputs:
             instructions = user_inputs[0].get("full_text") or ""
             extra_queries = self._extract_focus_queries(str(instructions))
@@ -445,7 +544,8 @@ class ConclavePipeline:
         if not instructions:
             return []
         import re
-        paths = re.findall(r"^-\\s*(/[^\\s]+)$", instructions, re.MULTILINE)
+        # Match absolute paths after "- " and allow any non-whitespace chars
+        paths = re.findall(r"^-\s*(/\S+)$", instructions, re.MULTILINE)
         unique = []
         seen = set()
         for path in paths:
