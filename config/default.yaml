@@ -88,7 +88,7 @@ models:
         - --output-format
         - text
         - --model
-        - opus
+        - opus-4.5
         - --no-session-persistence
       prompt_mode: arg
       timeout_seconds: 120
@@ -116,19 +116,21 @@ models:
     - id: cli:codex
       provider: cli
       kind: external
-      model_label: gpt-5.2-codex
+      model_label: codex-5.2
       command:
         - /usr/local/bin/codex
         - exec
+        - --skip-git-repo-check
         - --sandbox
         - read-only
         - --model
-        - gpt-5.2-codex
+        - codex-5.2
       prompt_mode: stdin
       stdin_flag: "-"
       timeout_seconds: 120
       env:
         NO_COLOR: "1"
+      fallback_model: ollama:qwen2.5-coder:32b
       capabilities:
         text_reasoning: true
         code_generation: high
@@ -155,6 +157,7 @@ planner:
   role_overrides:
     reasoner: cli:codex
     critic: cli:claude
+    summarizer: cli:claude
   weights:
     latency: 0.35
     reliability: 0.25
@@ -267,6 +270,7 @@ calibration:
   enabled: true
   providers:
     - ollama
+    - cli
   max_seconds: 20
   ping_prompt: "Return only: OK"
 

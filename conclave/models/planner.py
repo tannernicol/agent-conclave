@@ -63,12 +63,22 @@ class Planner:
             if override:
                 card = registry_map.get(override)
                 if card:
-                    ok, reason = self._check_requirements(role, card, constraints.get(role, {}))
+                    allow_unhealthy = bool(card.get("fallback_model"))
+                    ok, reason = self._check_requirements(
+                        role,
+                        card,
+                        constraints.get(role, {}),
+                        allow_unhealthy=allow_unhealthy,
+                    )
                     candidates.append({
                         "id": card.get("id"),
                         "eligible": ok,
                         "score": None,
-                        "details": {"override": True, "reason": reason or "ok"},
+                        "details": {
+                            "override": True,
+                            "reason": reason or "ok",
+                            "allow_unhealthy": allow_unhealthy,
+                        },
                     })
                     if ok:
                         assignments[role] = card.get("id")
@@ -124,7 +134,16 @@ class Planner:
             }
         return {"assignments": assignments, "rationale": rationale}
 
-    def _check_requirements(self, role: str, card: Dict[str, Any], constraint: Dict[str, Any]) -> tuple[bool, str]:
+    def _check_requirements(
+        self,
+        role: str,
+        card: Dict[str, Any],
+        constraint: Dict[str, Any],
+        allow_unhealthy: bool = False,
+    ) -> tuple[bool, str]:
+        metrics = card.get("metrics", {})
+        if metrics.get("ok") is False and not allow_unhealthy:
+            return False, "model unhealthy"
         caps = card.get("capabilities", {})
         reqs = ROLE_REQUIREMENTS.get(role, {})
         for key, value in reqs.items():
