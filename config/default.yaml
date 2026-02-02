@@ -116,15 +116,13 @@ models:
     - id: cli:codex
       provider: cli
       kind: external
-      model_label: codex-5.2
+      model_label: codex (auto)
       command:
         - /usr/local/bin/codex
         - exec
         - --skip-git-repo-check
         - --sandbox
         - read-only
-        - --model
-        - codex-5.2
       prompt_mode: stdin
       stdin_flag: "-"
       timeout_seconds: 120
