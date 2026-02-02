@@ -188,8 +188,7 @@ function renderMarkdown(text) {
 // Check if output indicates insufficient evidence
 function isInsufficientEvidence(consensus) {
   if (!consensus) return false;
-  return consensus.insufficient_evidence ||
-    (consensus.answer && consensus.answer.includes('Insufficient Evidence'));
+  return Boolean(consensus.insufficient_evidence);
 }
 
 // Parse issue details from consensus

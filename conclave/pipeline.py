@@ -121,7 +121,9 @@ class ConclavePipeline:
             self.store.append_event(run_id, {"phase": "quality", **quality})
             issues = quality.get("issues", [])
             fail_on_rag_errors = bool(self.config.quality.get("fail_on_rag_errors", False))
-            if (quality.get("insufficient") or (fail_on_rag_errors and "rag_errors" in issues)) and bool(self.config.quality.get("strict", True)):
+            block_on_insufficient = bool(self.config.quality.get("block_on_insufficient", False))
+            should_block = block_on_insufficient and (quality.get("insufficient") or (fail_on_rag_errors and "rag_errors" in issues))
+            if should_block and bool(self.config.quality.get("strict", True)):
                 consensus = self._insufficient_evidence_answer(query, quality)
                 artifacts = {
                     "route": route,
@@ -160,27 +162,8 @@ class ConclavePipeline:
                     issues = quality.get("issues", [])
                     issues.append("bounty_format")
                     quality["issues"] = issues
-                    quality["insufficient"] = True
-                    if bool(self.config.quality.get("strict", True)):
-                        consensus = self._insufficient_evidence_answer(query, quality, note=note)
-                        artifacts = {
-                            "route": route,
-                            "context": context,
-                            "deliberation": deliberation,
-                            "quality": quality,
-                            "reconcile": {
-                                "previous_run_id": self._latest_for_meta(meta),
-                                "changed": True,
-                            },
-                        }
-                        self.store.finalize_run(run_id, consensus, artifacts)
-                        audit.log("settlement.complete", {
-                            "consensus": consensus,
-                            "reconcile": artifacts["reconcile"],
-                            "quality": quality,
-                            "note": f"bounty_output_invalid: {note}",
-                        })
-                        return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
+                    # Keep the run going; mark issues but don't hard-fail.
+                    audit.log("bounty.output.invalid", {"note": note})
             previous = self._latest_for_meta(meta)
             reconcile = {
                 "previous_run_id": previous.get("id") if previous else None,

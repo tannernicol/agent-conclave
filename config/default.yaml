@@ -281,6 +281,7 @@ deliberation:
 
 quality:
   strict: true
+  block_on_insufficient: false
   fail_on_rag_errors: false
   min_evidence: 2
   low_signal_threshold: 0.5
