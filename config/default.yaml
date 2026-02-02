@@ -278,12 +278,12 @@ quality:
   strict: true
   min_evidence: 2
   low_signal_threshold: 0.5
-  high_signal_threshold: 1.5
+  high_signal_threshold: 1.0
   high_evidence_min: 6
-  min_strong_evidence: 1
+  min_strong_evidence: 0
   min_content_evidence: 1
   min_non_user_evidence: 1
-  min_required_collection_hits: 1
+  min_required_collection_hits: 0
   pdf_ratio_limit: 0.7
   off_domain_ratio_limit: 0.5
   strict_exit_code: 2

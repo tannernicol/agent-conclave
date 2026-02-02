@@ -55,6 +55,28 @@ class QualityTests(unittest.TestCase):
         )
         self.assertGreaterEqual(stats.get("required_collection_hits", 0), 1)
 
+    def test_required_collections_only_enforced_when_present(self):
+        config = get_config()
+        pipeline = ConclavePipeline(config)
+        rag = [
+            {
+                "path": "/home/tanner/notes/example.md",
+                "collection": "notes",
+                "snippet": "x" * 120,
+                "score": 0.9,
+            }
+        ]
+        evidence, stats = pipeline._select_evidence(
+            rag,
+            [],
+            required_collections=[],
+            preferred_collections=["notes"],
+            domain="general",
+            domain_paths=config.quality.get("domain_paths", {}),
+        )
+        quality = pipeline._evaluate_quality({"stats": stats})
+        self.assertNotIn("missing_required_evidence", quality.get("issues", []))
+
 
 if __name__ == "__main__":
     unittest.main()

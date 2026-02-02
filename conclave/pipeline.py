@@ -249,7 +249,7 @@ class ConclavePipeline:
             domain = "agriculture"
         if any(word in q for word in tax_keywords):
             needs_tax = True
-        if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
+        if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi", "ssrf", "xss", "sqli", "sql injection", "rce", "csrf", "idor", "cve", "payload", "pwn"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
         required_collections: List[str] = []
@@ -1124,6 +1124,7 @@ class ConclavePipeline:
             "content_evidence_count": content_count,
             "non_user_evidence_count": non_user_count,
             "required_collection_hits": required_hits,
+            "required_collection_count": len(required_set),
         }
         return selected, stats
 
@@ -1173,7 +1174,7 @@ class ConclavePipeline:
         min_strong = int(self.config.quality.get("min_strong_evidence", 1))
         min_content = int(self.config.quality.get("min_content_evidence", 1))
         min_non_user = int(self.config.quality.get("min_non_user_evidence", 1))
-        min_required = int(self.config.quality.get("min_required_collection_hits", 1))
+        min_required = int(self.config.quality.get("min_required_collection_hits", 0))
         evidence_count = int(stats.get("evidence_count", 0))
         max_signal = float(stats.get("max_signal_score", 0))
         avg_signal = float(stats.get("avg_signal_score", 0))
@@ -1184,6 +1185,7 @@ class ConclavePipeline:
         content_count = int(stats.get("content_evidence_count", 0))
         non_user_count = int(stats.get("non_user_evidence_count", 0))
         required_hits = int(stats.get("required_collection_hits", 0))
+        required_count = int(stats.get("required_collection_count", 0))
         issues = []
         if evidence_count < min_evidence:
             issues.append("insufficient_evidence")
@@ -1191,7 +1193,10 @@ class ConclavePipeline:
             issues.append("low_signal")
         if strong_count < min_strong or content_count < min_content or non_user_count < min_non_user:
             issues.append("low_relevance")
-        if required_hits < min_required:
+        effective_required = min_required
+        if required_count:
+            effective_required = max(min_required, 1)
+        if required_count and required_hits < effective_required:
             issues.append("missing_required_evidence")
         if pdf_ratio > pdf_ratio_limit:
             issues.append("pdf_heavy")
