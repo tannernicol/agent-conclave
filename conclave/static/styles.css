@@ -691,6 +691,50 @@ textarea#query {
   transition: border-color 0.15s;
 }
 
+.run-progress {
+  margin: 8px 0 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-surface-3);
+}
+
+.run-progress-label {
+  font-size: 11px;
+  color: var(--ui-muted-2);
+  margin-bottom: 6px;
+}
+
+.run-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-progress-steps .phase {
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--ui-border);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ui-muted-2);
+  background: var(--ui-surface-2);
+}
+
+.run-progress-steps .phase.active {
+  color: var(--ui-text);
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.1);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.run-progress-steps .phase.done {
+  color: var(--ui-text);
+  border-color: rgba(127, 255, 136, 0.4);
+  background: rgba(127, 255, 136, 0.08);
+}
+
 .run-card:hover {
   border-color: rgba(255, 255, 255, 0.1);
 }

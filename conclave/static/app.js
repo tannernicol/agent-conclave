@@ -32,6 +32,7 @@ let pollTimer = null;
 let currentPromptId = null;
 let collectionsLoaded = false;
 let runActionTimer = null;
+let runListTimer = null;
 
 // Utilities
 async function fetchJSON(url, options) {
@@ -368,6 +369,24 @@ function renderProgress(run) {
   }).join('');
 }
 
+function renderRunProgress(run) {
+  const phases = buildPhaseState(run);
+  const active = phases.find((phase) => phase.active) || phases.find((phase) => !phase.done);
+  const label = active ? active.label : (run.status === 'complete' ? 'Complete' : 'Queued');
+  const steps = phases.map((phase) => {
+    const classes = ['phase'];
+    if (phase.done) classes.push('done');
+    if (phase.active) classes.push('active');
+    return `<span class="${classes.join(' ')}">${phase.label}</span>`;
+  }).join('');
+  return `
+    <div class="run-progress">
+      <div class="run-progress-label">Phase: ${label}</div>
+      <div class="run-progress-steps">${steps}</div>
+    </div>
+  `;
+}
+
 // Render models used
 function renderModels(latest) {
   if (!latestModelsEl) return;
@@ -507,7 +526,9 @@ function renderRuns(runs) {
   if (!runListEl) return;
 
   if (runCountEl) {
-    runCountEl.textContent = `${runs.length} run${runs.length !== 1 ? 's' : ''}`;
+    const runningCount = runs.filter((run) => run.status === 'running').length;
+    const runningLabel = runningCount ? ` • ${runningCount} running` : '';
+    runCountEl.textContent = `${runs.length} run${runs.length !== 1 ? 's' : ''}${runningLabel}`;
   }
 
   if (!runs.length) {
@@ -547,6 +568,7 @@ function renderRuns(runs) {
     }
 
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
+    const progressHtml = status === 'running' ? renderRunProgress(run) : '';
 
     return `
       <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}" data-run-output="${escapeHtml(outputType)}">
@@ -557,6 +579,7 @@ function renderRuns(runs) {
             ${outputChip}
           </div>
           <div class="run-card-query">${escapeHtml(run.query || '')}</div>
+          ${progressHtml}
           ${outputHtml}
           <details class="run-card-expand">
             <summary>View full details</summary>
@@ -736,6 +759,17 @@ async function refresh() {
 
   // Load collections for picker (once)
   loadCollections();
+
+  if (!runListTimer) {
+    runListTimer = setInterval(async () => {
+      try {
+        const runs = await fetchJSON('/api/runs?limit=10');
+        renderRuns(runs.runs || []);
+      } catch (err) {
+        console.error('Runs refresh failed:', err);
+      }
+    }, 5000);
+  }
 }
 
 // Run management
