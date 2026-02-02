@@ -50,7 +50,7 @@ conclave/
 ## Context sources
 - **homelab-search** (rag.tannner.com) for RAG collections
 - **NAS index** from an allowlist (with explicit exclusions)
-- **MCP registry** detected from `~/.mcp.json` (logged; no tool calls by default)
+- **MCP registry** detected from `~/.mcp.json`, auto-reloaded on change with server restarts when configs drift
 - **User inputs** stored as Markdown in `~/.conclave/inputs` and treated as high-signal evidence
 - **Health dashboard** pages (health.tannner.com) and **Money API** (money.tannner.com) can be ingested as evidence
 

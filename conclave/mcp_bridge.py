@@ -169,20 +169,47 @@ class MCPBridge:
         self.config_path = config_path or (Path.home() / ".mcp.json")
         self.servers: Dict[str, MCPServer] = {}
         self.config: Dict[str, Any] = {}
+        self._config_mtime: float | None = None
+        self._server_signatures: Dict[str, str] = {}
         self._load_config()
 
-    def _load_config(self) -> None:
-        """Load MCP server configuration."""
+    def _load_config(self, force: bool = False) -> None:
+        """Load MCP server configuration if updated."""
         if not self.config_path.exists():
             return
         try:
+            mtime = self.config_path.stat().st_mtime
+            if not force and self._config_mtime is not None and mtime <= self._config_mtime:
+                return
             data = json.loads(self.config_path.read_text())
             self.config = data.get("mcpServers", {})
+            self._config_mtime = mtime
+            self._reconcile_running_servers()
         except Exception as e:
             logger.warning(f"Failed to load MCP config: {e}")
 
+    def _server_signature(self, server_config: Dict[str, Any]) -> str:
+        command = server_config.get("command")
+        args = server_config.get("args", []) or []
+        env = server_config.get("env", {}) or {}
+        return json.dumps({"command": command, "args": args, "env": env}, sort_keys=True)
+
+    def _reconcile_running_servers(self) -> None:
+        """Restart running servers if config changed."""
+        for name, server in list(self.servers.items()):
+            cfg = self.config.get(name)
+            if not cfg:
+                continue
+            signature = self._server_signature(cfg)
+            if self._server_signatures.get(name) != signature:
+                logger.info(f"MCP server '{name}' config changed, restarting...")
+                server.close()
+                del self.servers[name]
+                self._server_signatures.pop(name, None)
+
     def _start_server(self, name: str) -> MCPServer | None:
         """Start an MCP server process."""
+        self._load_config()
         if name in self.servers:
             # Check if server is still alive
             if self.servers[name].process.poll() is None:
@@ -195,6 +222,10 @@ class MCPBridge:
         if not server_config:
             logger.warning(f"MCP server '{name}' not found in config")
             return None
+
+        signature = self._server_signature(server_config)
+        if name in self._server_signatures and self._server_signatures[name] != signature:
+            self._server_signatures.pop(name, None)
 
         command = server_config.get("command")
         args = server_config.get("args", [])
@@ -260,6 +291,7 @@ class MCPBridge:
 
             server = MCPServer(name=name, process=process)
             self.servers[name] = server
+            self._server_signatures[name] = signature
             logger.info(f"Started MCP server: {name}")
             return server
 
@@ -267,16 +299,109 @@ class MCPBridge:
             logger.error(f"Failed to start MCP server '{name}': {e}")
             return None
 
-    def call(self, server_name: str, tool: str, arguments: Dict[str, Any] = None, timeout: float = 30.0) -> MCPResponse:
-        """Call a tool on an MCP server."""
+    def _request(self, server_name: str, method: str, params: Dict[str, Any] | None = None, timeout: float = 30.0) -> MCPResponse:
+        """Send a raw MCP request to a server."""
         server = self._start_server(server_name)
         if not server:
             return MCPResponse(ok=False, error=f"MCP server '{server_name}' not available")
 
-        return server.call(tool, arguments or {}, timeout=timeout)
+        start = time.perf_counter()
+        with server.lock:
+            request_id = server._next_id()
+            request = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params or {},
+            }
+
+            try:
+                while not server.response_queue.empty():
+                    try:
+                        server.response_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                server.process.stdin.write(json.dumps(request) + "\n")
+                server.process.stdin.flush()
+
+                try:
+                    response_line = server.response_queue.get(timeout=timeout)
+                except queue.Empty:
+                    return MCPResponse(
+                        ok=False,
+                        error=f"MCP request timed out after {timeout}s",
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+
+                if not response_line:
+                    return MCPResponse(
+                        ok=False,
+                        error="No response from MCP server",
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+
+                response = json.loads(response_line)
+                if "error" in response:
+                    return MCPResponse(
+                        ok=False,
+                        error=response["error"].get("message", str(response["error"])),
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+
+                return MCPResponse(
+                    ok=True,
+                    result=response.get("result"),
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+            except Exception as e:
+                return MCPResponse(
+                    ok=False,
+                    error=str(e),
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+
+    def call(self, server_name: str, tool: str, arguments: Dict[str, Any] = None, timeout: float = 30.0) -> MCPResponse:
+        """Call a tool on an MCP server."""
+        response = self._request(
+            server_name,
+            "tools/call",
+            {"name": tool, "arguments": arguments or {}},
+            timeout=timeout,
+        )
+        response = self._parse_tool_result(response)
+        if response.ok:
+            return response
+        if response.error and "pipe broken" in response.error.lower():
+            server = self.servers.get(server_name)
+            if server:
+                server.close()
+                self.servers.pop(server_name, None)
+        return response
+
+    def _parse_tool_result(self, response: MCPResponse) -> MCPResponse:
+        """Normalize MCP tool responses that return text payloads."""
+        if not response.ok or response.result is None:
+            return response
+        if isinstance(response.result, dict):
+            content = response.result.get("content", [])
+            if content and isinstance(content, list):
+                texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                if texts:
+                    combined = "\n".join(texts)
+                    try:
+                        response.result = json.loads(combined)
+                    except json.JSONDecodeError:
+                        response.result = combined
+        return response
+
+    def list_tools(self, server_name: str, timeout: float = 10.0) -> MCPResponse:
+        """List tools exposed by an MCP server."""
+        return self._request(server_name, "tools/list", {}, timeout=timeout)
 
     def available_servers(self) -> List[str]:
         """List available MCP servers from config."""
+        self._load_config()
         return list(self.config.keys())
 
     def close_all(self) -> None:

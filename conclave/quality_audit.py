@@ -101,24 +101,34 @@ def _audit_mcp(config: Config) -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     for server in servers:
         check = checks.get(server)
-        if not check:
-            results.append({
-                "server": server,
+        entry: Dict[str, Any] = {"server": server}
+        if check:
+            tool = check.get("tool")
+            args = check.get("arguments", {}) or {}
+            timeout = float(check.get("timeout", 15.0))
+            resp = bridge.call(server, tool, args, timeout=timeout)
+            entry.update({
+                "tool": tool,
+                "ok": resp.ok,
+                "duration_ms": resp.duration_ms,
+                "error": resp.error,
+            })
+        else:
+            entry.update({
                 "ok": None,
                 "error": "no health check configured",
             })
-            continue
-        tool = check.get("tool")
-        args = check.get("arguments", {}) or {}
-        timeout = float(check.get("timeout", 15.0))
-        resp = bridge.call(server, tool, args, timeout=timeout)
-        results.append({
-            "server": server,
-            "tool": tool,
-            "ok": resp.ok,
-            "duration_ms": resp.duration_ms,
-            "error": resp.error,
-        })
+
+        tool_list = bridge.list_tools(server, timeout=10.0)
+        if tool_list.ok and isinstance(tool_list.result, dict):
+            tools = tool_list.result.get("tools", []) or []
+            entry["tool_count"] = len(tools)
+            entry["tools_sample"] = [t.get("name") for t in tools[:5] if isinstance(t, dict)]
+        else:
+            entry["tool_count"] = 0
+            entry["tools_error"] = tool_list.error
+
+        results.append(entry)
     bridge.close_all()
     return {
         "servers": servers,
@@ -198,7 +208,9 @@ def _render_markdown(payload: Dict[str, Any]) -> str:
                 status = "ok" if entry.get("ok") else "fail" if entry.get("ok") is False else "skip"
                 tool = entry.get("tool") or "n/a"
                 error = entry.get("error") or ""
-                lines.append(f"- {entry.get('server')}: {status} ({tool}) {error}".strip())
+                tools = entry.get("tool_count")
+                tools_note = f"tools:{tools}" if tools is not None else "tools:? "
+                lines.append(f"- {entry.get('server')}: {status} ({tool}) {tools_note} {error}".strip())
             lines.append("")
 
     on_demand = payload.get("on_demand") or {}
