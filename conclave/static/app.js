@@ -20,6 +20,11 @@ let currentRunId = null;
 let pollTimer = null;
 let currentPromptId = null;
 
+function updatePromptButton() {
+  if (!savePromptBtn) return;
+  savePromptBtn.textContent = currentPromptId ? 'Update Prompt' : 'Save Prompt';
+}
+
 async function fetchJSON(url, options) {
   const resp = await fetch(url, options);
   if (!resp.ok) {
@@ -589,6 +594,7 @@ async function savePrompt() {
   }
   currentPromptId = resp.prompt.id;
   setPromptStatus(`Saved: ${currentPromptId}`);
+  updatePromptButton();
   refresh();
 }
 
@@ -600,6 +606,7 @@ async function loadPrompt(promptId) {
   document.getElementById('input-artifacts').value = (prompt.artifacts || []).join('\n');
   currentPromptId = prompt.id;
   setPromptStatus(`Loaded: ${prompt.id}`);
+  updatePromptButton();
 }
 
 async function runPrompt(promptId) {
@@ -610,6 +617,7 @@ async function runPrompt(promptId) {
   currentPromptId = promptId;
   setStatus('Running...');
   setSmoke(false);
+  updatePromptButton();
   pollRun(currentRunId);
 }
 
@@ -690,6 +698,7 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('input-artifacts').value = '';
   currentPromptId = null;
   setPromptStatus('Not saved');
+  updatePromptButton();
 });
 
 if (savePromptBtn) {
@@ -739,3 +748,4 @@ if (promptListEl) {
 }
 
 refresh();
+updatePromptButton();
