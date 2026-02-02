@@ -240,6 +240,8 @@ class ConclavePipeline:
             domain = "health"
         if any(word in q for word in ["money", "portfolio", "allocation", "asset mix", "rebalance", "invest"]):
             domain = "money"
+        if any(word in q for word in ["farm", "farmland", "orchard", "agriculture", "acreage", "ranch", "livestock", "soil"]):
+            domain = "agriculture"
         if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
@@ -848,9 +850,12 @@ class ConclavePipeline:
             signal -= 0.3
         elif ext in {".md", ".txt", ".json", ".yaml", ".yml", ".toml"}:
             signal += 0.3
+        snippet_len = len(snippet.strip())
         if match_type == "filename" and source != "user":
+            signal -= 0.5
+        if snippet_len < 40 and source != "user":
             signal -= 0.2
-        if len(snippet.strip()) < 40 and source != "user":
+        if snippet_len < 20 and source != "user":
             signal -= 0.2
         on_domain = False
         domain_known = False
@@ -870,7 +875,7 @@ class ConclavePipeline:
         if source == "user" or source == "source":
             domain_known = True
             on_domain = True
-        if preferred_collections and domain_known:
+        if preferred_collections and domain_known and domain != "general":
             if on_domain:
                 signal += 0.2
             else:
@@ -902,6 +907,8 @@ class ConclavePipeline:
             "mtime": mtime,
             "on_domain": on_domain if domain_known else None,
             "line": line,
+            "match_type": match_type,
+            "snippet_len": snippet_len,
         }
 
     def _select_evidence(
@@ -941,6 +948,20 @@ class ConclavePipeline:
             if len(selected) >= limit:
                 break
         pdf_count = sum(1 for item in selected if item.get("extension") == ".pdf")
+        high_signal_threshold = float(self.config.quality.get("high_signal_threshold", 1.5))
+        strong_count = 0
+        content_count = 0
+        non_user_count = 0
+        for item in selected:
+            if item.get("source") != "user":
+                non_user_count += 1
+            snippet_len = int(item.get("snippet_len") or 0)
+            match_type = item.get("match_type") or ""
+            if snippet_len >= 80 and match_type != "filename":
+                content_count += 1
+            if item.get("source") != "user" and snippet_len >= 80 and match_type != "filename":
+                if float(item.get("signal_score", 0)) >= high_signal_threshold:
+                    strong_count += 1
         off_domain = 0
         on_domain = 0
         domain_known = 0
@@ -962,6 +983,9 @@ class ConclavePipeline:
             "domain_known": domain_known,
             "on_domain": on_domain,
             "off_domain": off_domain,
+            "strong_evidence_count": strong_count,
+            "content_evidence_count": content_count,
+            "non_user_evidence_count": non_user_count,
         }
         return selected, stats
 
@@ -1008,17 +1032,25 @@ class ConclavePipeline:
         pdf_ratio_limit = float(self.config.quality.get("pdf_ratio_limit", 0.7))
         off_domain_limit = float(self.config.quality.get("off_domain_ratio_limit", 0.5))
         low_signal_threshold = float(self.config.quality.get("low_signal_threshold", 0.5))
+        min_strong = int(self.config.quality.get("min_strong_evidence", 1))
+        min_content = int(self.config.quality.get("min_content_evidence", 1))
+        min_non_user = int(self.config.quality.get("min_non_user_evidence", 1))
         evidence_count = int(stats.get("evidence_count", 0))
         max_signal = float(stats.get("max_signal_score", 0))
         avg_signal = float(stats.get("avg_signal_score", 0))
         pdf_ratio = float(stats.get("pdf_ratio", 0))
         off_domain_ratio = float(stats.get("off_domain_ratio", 0))
         domain_known = int(stats.get("domain_known", 0))
+        strong_count = int(stats.get("strong_evidence_count", 0))
+        content_count = int(stats.get("content_evidence_count", 0))
+        non_user_count = int(stats.get("non_user_evidence_count", 0))
         issues = []
         if evidence_count < min_evidence:
             issues.append("insufficient_evidence")
         if max_signal < low_signal_threshold:
             issues.append("low_signal")
+        if strong_count < min_strong or content_count < min_content or non_user_count < min_non_user:
+            issues.append("low_relevance")
         if pdf_ratio > pdf_ratio_limit:
             issues.append("pdf_heavy")
         if domain_known and off_domain_ratio > off_domain_limit:
@@ -1036,7 +1068,7 @@ class ConclavePipeline:
             "rag_errors": stats.get("rag_errors", []),
             "source_errors": stats.get("source_errors", []),
             "issues": issues,
-            "insufficient": bool(issues and ("insufficient_evidence" in issues or "low_signal" in issues)),
+            "insufficient": bool(issues and ("insufficient_evidence" in issues or "low_signal" in issues or "low_relevance" in issues)),
         }
 
     def _expand_collections(self, domain: str, base: List[str], explicit: bool = False) -> tuple[List[str], Dict[str, Any]]:

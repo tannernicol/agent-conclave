@@ -179,6 +179,7 @@ rag:
     health: [health-rag, health-data, homelab-rag]
     bounty: [bounty-rag, bugbounty-rag, security-library]
     money: [homelab-rag, prompts]
+    agriculture: [survival-library, notes]
   dynamic_patterns:
     bounty:
       - "bounty"
@@ -197,6 +198,12 @@ rag:
       - "money"
       - "finance"
       - "portfolio"
+    agriculture:
+      - "agriculture"
+      - "farm"
+      - "orchard"
+      - "crop"
+      - "soil"
 
 index:
   enabled: true
@@ -248,6 +255,9 @@ quality:
   low_signal_threshold: 0.5
   high_signal_threshold: 1.5
   high_evidence_min: 6
+  min_strong_evidence: 1
+  min_content_evidence: 1
+  min_non_user_evidence: 1
   pdf_ratio_limit: 0.7
   off_domain_ratio_limit: 0.5
   strict_exit_code: 2
@@ -270,6 +280,8 @@ quality:
       - /mnt/nas/Homelab/Finance/**
       - /mnt/nas/Homelab/Money/**
       - /home/tanner/money/**
+    agriculture:
+      - /home/tanner/survival-library/**
 
 sources:
   health_dashboard_url: http://127.0.0.1:8094
