@@ -222,6 +222,81 @@ textarea {
   gap: 12px;
 }
 
+.prompt-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.helper-text {
+  font-size: 12px;
+  margin-top: -6px;
+}
+
+.latest-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0 6px;
+}
+
+.pipeline-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 6px;
+}
+
+.pipeline-progress .phase {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border);
+  font-size: 11px;
+  color: var(--ui-muted-2);
+}
+
+.pipeline-progress .phase.active {
+  color: var(--ui-text);
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 12px rgba(127, 255, 136, 0.3);
+}
+
+.pipeline-progress .phase.done {
+  color: var(--ui-text);
+  border-color: rgba(127, 255, 136, 0.5);
+  background: rgba(127, 255, 136, 0.08);
+}
+
+.evidence-list {
+  margin: 0;
+  padding-left: 14px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 11px;
+  color: var(--ui-muted);
+}
+
+.evidence-list li {
+  margin-bottom: 6px;
+}
+
+.model-footer {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ui-muted-2);
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+}
+
 .prompt-card {
   background: var(--ui-surface-2);
   border: 1px solid var(--ui-border);
@@ -450,5 +525,15 @@ textarea {
 
   .table-row {
     gap: 8px;
+  }
+
+  .latest-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .cell {
+    padding: 4px 0;
   }
 }

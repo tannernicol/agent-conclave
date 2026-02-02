@@ -3,6 +3,7 @@ const smokeEl = document.getElementById('smoke');
 const latestEl = document.getElementById('latest');
 const latestTimeEl = document.getElementById('latest-time');
 const latestPromptEl = document.getElementById('latest-prompt');
+const progressEl = document.getElementById('pipeline-progress');
 const runsEl = document.getElementById('run-rows');
 const form = document.getElementById('query-form');
 const rerunBtn = document.getElementById('rerun-latest');
@@ -11,6 +12,9 @@ const savePromptBtn = document.getElementById('save-prompt');
 const promptStatusEl = document.getElementById('prompt-status');
 const promptListEl = document.getElementById('prompt-list');
 const promptCountEl = document.getElementById('prompt-count');
+const smokeStatusEl = document.getElementById('smoke-status');
+const copyLatestBtn = document.getElementById('copy-latest');
+const promptExamplesEl = document.getElementById('prompt-examples');
 
 let currentRunId = null;
 let pollTimer = null;
@@ -26,6 +30,7 @@ async function fetchJSON(url, options) {
 
 function setStatus(text) {
   statusEl.textContent = text;
+  statusEl.setAttribute('aria-busy', text.toLowerCase().includes('running') ? 'true' : 'false');
 }
 
 function setPromptStatus(text) {
@@ -37,8 +42,10 @@ function setPromptStatus(text) {
 function setSmoke(active) {
   if (active) {
     smokeEl.classList.add('active');
+    if (smokeStatusEl) smokeStatusEl.textContent = 'Consensus reached.';
   } else {
     smokeEl.classList.remove('active');
+    if (smokeStatusEl) smokeStatusEl.textContent = 'No consensus in progress.';
   }
 }
 
@@ -180,6 +187,15 @@ function renderMarkdown(text) {
   return html;
 }
 
+function renderEmptyState() {
+  return `
+    <div class="empty-state">
+      <p>Ask a question about <strong>health</strong>, <strong>tax</strong>, <strong>money</strong>, or <strong>bounty</strong> to get a multi-model consensus.</p>
+      <p class="ui-muted">Example: "What vitamins should I take daily?"</p>
+    </div>
+  `;
+}
+
 function formatTime(value) {
   if (!value) return '—';
   const parsed = new Date(value);
@@ -234,6 +250,82 @@ function renderRecommendations(text) {
   return `<ul class="output-list">${recs.map((item) => `<li>${renderInline(escapeHtml(item))}</li>`).join('')}</ul>`;
 }
 
+function buildPhaseState(run) {
+  const phases = [
+    { key: 'route', label: 'Route' },
+    { key: 'retrieve', label: 'RAG' },
+    { key: 'reasoner', label: 'Reason' },
+    { key: 'critic', label: 'Critic' },
+    { key: 'summarizer', label: 'Summarize' },
+  ];
+  if (!run) return phases;
+  const events = run.events || [];
+  const done = new Set();
+  events.forEach((event) => {
+    if (event.phase === 'route' && event.status === 'done') done.add('route');
+    if (event.phase === 'retrieve' && event.status === 'done') done.add('retrieve');
+    if (event.phase === 'model' && event.role) done.add(event.role);
+  });
+  if (run.status === 'complete') {
+    phases.forEach((phase) => done.add(phase.key));
+  }
+  let active = null;
+  if (run.status === 'running') {
+    active = phases.find((phase) => !done.has(phase.key))?.key || null;
+  }
+  return phases.map((phase) => ({
+    ...phase,
+    done: done.has(phase.key),
+    active: active === phase.key,
+  }));
+}
+
+function renderProgress(run) {
+  if (!progressEl) return;
+  if (!run || (!run.events && run.status !== 'running')) {
+    progressEl.innerHTML = '';
+    return;
+  }
+  const phases = buildPhaseState(run);
+  progressEl.innerHTML = phases.map((phase) => {
+    const classes = ['phase'];
+    if (phase.done) classes.push('done');
+    if (phase.active) classes.push('active');
+    return `<span class="${classes.join(' ')}">${phase.label}</span>`;
+  }).join('');
+}
+
+function renderEvidence(run) {
+  const evidence = run?.artifacts?.context?.evidence || [];
+  const collections = run?.artifacts?.route?.collections || [];
+  if (!evidence.length) {
+    return '<div class="empty-state">No evidence captured.</div>';
+  }
+  const items = evidence.slice(0, 8).map((item) => {
+    const title = item.title || item.name || item.path || item.file_path || 'Evidence';
+    const path = item.path || item.file_path || '';
+    const score = typeof item.signal_score === 'number' ? item.signal_score.toFixed(2) : '—';
+    const collection = item.collection || item.source || 'unknown';
+    const detail = path ? `${title} (${path})` : title;
+    return `<li>${escapeHtml(detail)} <span class="ui-muted">[${escapeHtml(collection)} | signal ${score}]</span></li>`;
+  }).join('');
+  const collectionLine = collections.length ? `<div class="ui-muted">Collections: ${escapeHtml(collections.join(', '))}</div>` : '';
+  return `${collectionLine}<ul class="evidence-list">${items}</ul>`;
+}
+
+function renderModelFooter(run) {
+  const plan = run?.artifacts?.route?.plan;
+  if (!plan) return '';
+  const parts = [
+    plan.router ? `Router: ${plan.router}` : null,
+    plan.reasoner ? `Reasoner: ${plan.reasoner}` : null,
+    plan.critic ? `Critic: ${plan.critic}` : null,
+    plan.summarizer ? `Summarizer: ${plan.summarizer}` : null,
+  ].filter(Boolean);
+  if (!parts.length) return '';
+  return `<div class="model-footer">Models: ${escapeHtml(parts.join(' · '))}</div>`;
+}
+
 function summarizeEvent(event) {
   const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
   const phase = event.phase || event.event || 'event';
@@ -247,13 +339,17 @@ function summarizeEvent(event) {
   return `${time} ${phase}${detail ? ` · ${detail}` : ''}`.trim();
 }
 
-function renderLogs(events, outputText) {
-  if (!events || !events.length) {
+function renderLogs(run) {
+  const events = run?.events || [];
+  if (!events.length) {
     return '<div class="empty-state">No logs yet.</div>';
   }
   const preview = events.slice(-4).map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
   const full = events.map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
+  const outputText = run?.consensus?.answer || run?.error || '';
   const outputBody = outputText ? renderMarkdown(outputText) : '<div class="empty-state">No output.</div>';
+  const evidenceBody = renderEvidence(run);
+  const modelFooter = renderModelFooter(run);
   return `
     <ul class="log-list">${preview}</ul>
     <details class="log-detail">
@@ -266,6 +362,11 @@ function renderLogs(events, outputText) {
         <div>
           <div class="log-section-title">Full Output</div>
           <div class="markdown">${outputBody}</div>
+          ${modelFooter}
+        </div>
+        <div>
+          <div class="log-section-title">Evidence</div>
+          ${evidenceBody}
         </div>
       </div>
     </details>
@@ -280,10 +381,33 @@ function resolveTitle(run) {
 }
 
 function renderLatest(latest) {
-  if (!latest || !latest.consensus) {
-    latestEl.innerHTML = '<div class="empty-state">No consensus yet.</div>';
+  if (!latest) {
+    latestEl.innerHTML = renderEmptyState();
     latestTimeEl.textContent = '—';
     if (latestPromptEl) latestPromptEl.textContent = 'Prompt: —';
+    renderProgress(null);
+    return;
+  }
+  if (latest.status === 'running') {
+    latestEl.innerHTML = '<div class="empty-state">Running consensus... check the Decision Log for live events.</div>';
+    latestTimeEl.textContent = formatTime(latest.created_at);
+    if (latestPromptEl) {
+      const input = latest.meta && latest.meta.input_title ? ` | Input: ${latest.meta.input_title}` : '';
+      latestPromptEl.textContent = `Running: ${latest.query || '—'}${input}`;
+    }
+    renderProgress(latest);
+    return;
+  }
+  if (latest.status === 'failed') {
+    latestEl.innerHTML = `<div class="empty-state">Conclave failed: ${escapeHtml(latest.error || 'unknown error')}</div>`;
+    latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
+    renderProgress(latest);
+    return;
+  }
+  if (!latest.consensus) {
+    latestEl.innerHTML = renderEmptyState();
+    latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
+    renderProgress(latest);
     return;
   }
   latestEl.innerHTML = renderRecommendations(latest.consensus.answer || '');
@@ -293,12 +417,13 @@ function renderLatest(latest) {
     const input = latest.meta && latest.meta.input_title ? ` | Input: ${latest.meta.input_title}` : '';
     latestPromptEl.textContent = `Prompt: ${prompt}${input}`;
   }
+  renderProgress(latest);
 }
 
 function renderRuns(runs) {
   runsEl.innerHTML = '';
   if (!runs.length) {
-    runsEl.innerHTML = '<div class="empty-state">No runs yet.</div>';
+    runsEl.innerHTML = '<div class="empty-state">No runs yet. Start with a prompt to see decisions logged here.</div>';
     return;
   }
   runs.forEach((run) => {
@@ -318,7 +443,7 @@ function renderRuns(runs) {
         <div class="clamp-2">${escapeHtml(run.query || '')}</div>
         <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)}</div>
       </div>
-      <div class="cell">${renderLogs(run.events || [], output)}</div>
+      <div class="cell">${renderLogs(run)}</div>
       <div class="cell markdown clamp-3">${renderRecommendations(output)}</div>
       <div class="cell cell-time ui-mono">${formatTime(run.completed_at || run.created_at)}</div>
     `;
@@ -377,6 +502,7 @@ async function refresh() {
 async function startRun(query) {
   setStatus('Running...');
   setSmoke(false);
+  renderProgress({ status: 'running', events: [] });
   const inputTitle = document.getElementById('input-title').value.trim();
   const inputNotes = document.getElementById('input-notes').value.trim();
   let inputId = null;
@@ -475,8 +601,10 @@ async function pollRun(runId) {
       } else if (run.status === 'failed') {
         clearInterval(pollTimer);
         setStatus(`Conclave failed: ${run.error || 'unknown error'}`);
+        renderLatest(run);
       } else {
         setStatus('Running...');
+        renderLatest(run);
       }
     } catch (err) {
       console.error(err);
@@ -538,6 +666,30 @@ clearBtn.addEventListener('click', () => {
 if (savePromptBtn) {
   savePromptBtn.addEventListener('click', () => {
     savePrompt().catch((err) => console.error(err));
+  });
+}
+
+if (copyLatestBtn) {
+  copyLatestBtn.addEventListener('click', async () => {
+    try {
+      const latest = await fetchJSON('/api/runs/latest');
+      const text = latest?.consensus?.answer || '';
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      setStatus('Copied consensus output.');
+    } catch (err) {
+      console.error(err);
+    }
+  });
+}
+
+if (promptExamplesEl) {
+  promptExamplesEl.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const example = target.dataset.example;
+    if (!example) return;
+    document.getElementById('query').value = example;
   });
 }
 
