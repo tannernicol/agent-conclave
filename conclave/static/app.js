@@ -477,6 +477,7 @@ function renderRuns(runs) {
       <div class="cell cell-time ui-mono">
         ${formatTime(run.completed_at || run.created_at)}
         <div class="run-actions">
+          <button class="ui-button ghost edit-run" data-run-id="${escapeHtml(run.id || '')}">Edit</button>
           <button class="ui-button ghost rerun-run" data-run-id="${escapeHtml(run.id || '')}">Re-run</button>
           <button class="ui-button ghost delete-run" data-run-id="${escapeHtml(run.id || '')}">Delete</button>
         </div>
@@ -512,6 +513,70 @@ function renderPromptList(prompts) {
     `;
     promptListEl.appendChild(card);
   });
+}
+
+function parseInputMarkdown(content) {
+  const lines = (content || '').split('\n');
+  let title = '';
+  let question = '';
+  let notes = [];
+  let artifacts = [];
+  let section = '';
+  lines.forEach((line) => {
+    if (line.startsWith('# ')) {
+      title = line.replace(/^#\\s+/, '').trim();
+      return;
+    }
+    if (line.startsWith('## ')) {
+      section = line.replace(/^##\\s+/, '').trim().toLowerCase();
+      return;
+    }
+    if (!section) return;
+    if (section === 'question') {
+      if (line.trim()) question += (question ? '\\n' : '') + line.trim();
+      return;
+    }
+    if (section === 'notes') {
+      notes.push(line);
+      return;
+    }
+    if (section === 'artifacts') {
+      const value = line.replace(/^[-*]\\s+/, '').trim();
+      if (value) artifacts.push(value);
+    }
+  });
+  return {
+    title,
+    question,
+    notes: notes.join('\\n').trim(),
+    artifacts,
+  };
+}
+
+async function loadRunForEdit(run) {
+  if (!run) return;
+  if (run.meta && run.meta.prompt_id) {
+    await loadPrompt(run.meta.prompt_id);
+    return;
+  }
+  const inputPath = run.meta && run.meta.input_path ? run.meta.input_path : '';
+  let inputData = null;
+  if (inputPath && inputPath.includes('/inputs/')) {
+    const inputId = inputPath.split('/').pop();
+    try {
+      inputData = await fetchJSON(`/api/inputs/${inputId}`);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  const parsed = inputData ? parseInputMarkdown(inputData.content) : { title: '', question: '', notes: '', artifacts: [] };
+  document.getElementById('query').value = run.query || parsed.question || '';
+  document.getElementById('input-title').value = parsed.title || '';
+  document.getElementById('input-notes').value = parsed.notes || '';
+  document.getElementById('input-artifacts').value = (parsed.artifacts || []).join('\\n');
+  currentPromptId = null;
+  setPromptStatus('Loaded run (unsaved)');
+  updatePromptButton();
 }
 
 async function refresh() {
@@ -778,6 +843,12 @@ if (runsEl) {
     if (!(target instanceof HTMLElement)) return;
     const runId = target.dataset.runId;
     if (!runId) return;
+    if (target.classList.contains('edit-run')) {
+      fetchJSON(`/api/runs/${runId}`)
+        .then((run) => loadRunForEdit(run))
+        .catch((err) => console.error(err));
+      return;
+    }
     if (target.classList.contains('rerun-run')) {
       setStatus('Running...');
       setSmoke(false);

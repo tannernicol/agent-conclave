@@ -250,6 +250,15 @@ async def inputs_list_api(request: Request, limit: int = 20):
     return {"inputs": items}
 
 
+@app.get("/api/inputs/{input_id}")
+async def inputs_get_api(input_id: str, request: Request):
+    config = request.app.state.config
+    path = _inputs_dir(config) / input_id
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"id": input_id, "path": str(path), "content": path.read_text()}
+
+
 @app.post("/api/prompts")
 async def prompts_create_api(payload: dict, request: Request):
     config = request.app.state.config
