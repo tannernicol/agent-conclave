@@ -5,7 +5,12 @@ const smokeEl = document.getElementById('smoke');
 const latestEl = document.getElementById('latest');
 const latestTimeEl = document.getElementById('latest-time');
 const latestPromptEl = document.getElementById('latest-prompt');
+const latestModelsEl = document.getElementById('latest-models');
+const latestEvidenceEl = document.getElementById('latest-evidence');
 const progressEl = document.getElementById('pipeline-progress');
+const runActionEl = document.getElementById('run-action');
+const runActionTitleEl = document.getElementById('run-action-title');
+const runActionDetailEl = document.getElementById('run-action-detail');
 const runListEl = document.getElementById('run-list');
 const runCountEl = document.getElementById('run-count');
 const form = document.getElementById('query-form');
@@ -18,10 +23,14 @@ const promptCountEl = document.getElementById('prompt-count');
 const smokeStatusEl = document.getElementById('smoke-status');
 const copyLatestBtn = document.getElementById('copy-latest');
 const promptExamplesEl = document.getElementById('prompt-examples');
+const collectionPickerEl = document.getElementById('input-collections');
+const toggleEvidenceBtn = document.getElementById('toggle-evidence');
 
 let currentRunId = null;
 let pollTimer = null;
 let currentPromptId = null;
+let collectionsLoaded = false;
+let runActionTimer = null;
 
 // Utilities
 async function fetchJSON(url, options) {
@@ -71,6 +80,37 @@ function setPromptStatus(text) {
 function setSmoke(active) {
   smokeEl.classList.toggle('active', active);
   if (smokeStatusEl) smokeStatusEl.textContent = active ? 'Consensus reached.' : 'No consensus in progress.';
+}
+
+function setRunAction(title, detail = '', type = 'info') {
+  if (!runActionEl) return;
+  if (runActionTimer) {
+    clearTimeout(runActionTimer);
+    runActionTimer = null;
+  }
+  if (!title) {
+    runActionEl.classList.add('hidden');
+    runActionEl.classList.remove('running', 'error', 'success');
+    if (runActionTitleEl) runActionTitleEl.textContent = '';
+    if (runActionDetailEl) runActionDetailEl.textContent = '';
+    return;
+  }
+  runActionEl.classList.remove('hidden', 'running', 'error', 'success');
+  if (type) runActionEl.classList.add(type);
+  if (runActionTitleEl) runActionTitleEl.textContent = title;
+  if (runActionDetailEl) runActionDetailEl.textContent = detail;
+}
+
+function setRunActionEphemeral(title, detail, type = 'success', ms = 4000) {
+  setRunAction(title, detail, type);
+  runActionTimer = setTimeout(() => setRunAction(''), ms);
+}
+
+function summarizeQuery(text, max = 80) {
+  if (!text) return '';
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max)}…`;
 }
 
 function updatePromptButton() {
@@ -327,6 +367,62 @@ function renderProgress(run) {
   }).join('');
 }
 
+// Render models used
+function renderModels(latest) {
+  if (!latestModelsEl) return;
+
+  const models = latest?.artifacts?.route?.plan_details || latest?.artifacts?.route?.plan || {};
+  if (!Object.keys(models).length) {
+    latestModelsEl.innerHTML = '';
+    return;
+  }
+
+  const tags = Object.entries(models).map(([role, info]) => {
+    const label = typeof info === 'object' ? (info.label || info.id || role) : info;
+    return `<span class="model-tag"><span class="model-tag-role">${escapeHtml(role)}</span><span class="model-tag-name">${escapeHtml(label)}</span></span>`;
+  }).join('');
+
+  latestModelsEl.innerHTML = tags;
+}
+
+// Render evidence panel
+function renderEvidence(latest) {
+  if (!latestEvidenceEl) return;
+
+  const evidence = latest?.artifacts?.context?.evidence || [];
+  if (!evidence.length) {
+    latestEvidenceEl.innerHTML = '';
+    return;
+  }
+
+  const items = evidence.slice(0, 8).map((item) => {
+    const source = item.source || 'rag';
+    const sourceClass = source === 'mcp' ? 'mcp' : (source === 'user' ? 'user' : '');
+    const title = item.title || item.path?.split('/').pop() || 'Evidence';
+    const snippet = item.snippet || '';
+    const score = typeof item.signal_score === 'number' ? item.signal_score.toFixed(2) : '—';
+
+    return `
+      <div class="evidence-item">
+        <span class="evidence-item-source ${sourceClass}">${escapeHtml(source)}</span>
+        <div class="evidence-item-body">
+          <div class="evidence-item-title">${escapeHtml(title)}</div>
+          <div class="evidence-item-snippet">${escapeHtml(snippet.slice(0, 150))}</div>
+        </div>
+        <span class="evidence-item-score">${score}</span>
+      </div>
+    `;
+  }).join('');
+
+  latestEvidenceEl.innerHTML = `
+    <div class="evidence-header">
+      <span class="evidence-title">Evidence Sources</span>
+      <span class="evidence-count">${evidence.length} items</span>
+    </div>
+    <div class="evidence-items">${items}</div>
+  `;
+}
+
 // Render Latest Decision
 function renderLatest(latest) {
   if (!latest) {
@@ -338,6 +434,8 @@ function renderLatest(latest) {
     `;
     latestTimeEl.textContent = '—';
     if (latestPromptEl) latestPromptEl.textContent = '';
+    if (latestModelsEl) latestModelsEl.innerHTML = '';
+    if (latestEvidenceEl) latestEvidenceEl.innerHTML = '';
     renderProgress(null);
     return;
   }
@@ -349,6 +447,9 @@ function renderLatest(latest) {
     latestPromptEl.textContent = prompt ? `"${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"` : '';
   }
 
+  // Render models used
+  renderModels(latest);
+
   if (latest.status === 'running') {
     latestEl.innerHTML = `
       <div class="empty-state">
@@ -356,6 +457,7 @@ function renderLatest(latest) {
         <p class="ui-muted">Check the pipeline stages above for progress.</p>
       </div>
     `;
+    if (latestEvidenceEl) latestEvidenceEl.innerHTML = '';
     renderProgress(latest);
     return;
   }
@@ -367,15 +469,20 @@ function renderLatest(latest) {
         <div class="output-error-details">${escapeHtml(latest.error || 'Unknown error')}</div>
       </div>
     `;
+    if (latestEvidenceEl) latestEvidenceEl.innerHTML = '';
     renderProgress(latest);
     return;
   }
 
   if (!latest.consensus) {
     latestEl.innerHTML = `<div class="empty-state">No consensus generated.</div>`;
+    if (latestEvidenceEl) latestEvidenceEl.innerHTML = '';
     renderProgress(latest);
     return;
   }
+
+  // Render evidence panel (hidden by default)
+  renderEvidence(latest);
 
   if (isInsufficientEvidence(latest.consensus)) {
     latestEl.innerHTML = renderInsufficientEvidence(latest.consensus, latest);
@@ -436,7 +543,7 @@ function renderRuns(runs) {
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
 
     return `
-      <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}">
+      <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}">
         <div class="run-card-main">
           <div class="run-card-title">
             ${escapeHtml(title.slice(0, 60))}${title.length > 60 ? '...' : ''}
@@ -532,6 +639,60 @@ function renderPromptList(prompts) {
   }).join('');
 }
 
+// Load collections for picker
+async function loadCollections() {
+  if (collectionsLoaded || !collectionPickerEl) return;
+
+  try {
+    const resp = await fetchJSON('/api/collections');
+    const collections = resp.collections || [];
+
+    // Keep the auto-detect option
+    let html = '<option value="">Auto-detect domain</option>';
+
+    // Group by type/reliability
+    const grouped = { high: [], medium: [], other: [] };
+    collections.forEach((c) => {
+      const reliability = c.reliability || 'other';
+      if (grouped[reliability]) {
+        grouped[reliability].push(c);
+      } else {
+        grouped.other.push(c);
+      }
+    });
+
+    // Add grouped options
+    if (grouped.high.length) {
+      html += '<optgroup label="High Reliability">';
+      grouped.high.forEach((c) => {
+        html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${c.file_count || 0})</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    if (grouped.medium.length) {
+      html += '<optgroup label="Medium Reliability">';
+      grouped.medium.forEach((c) => {
+        html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${c.file_count || 0})</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    if (grouped.other.length) {
+      html += '<optgroup label="Other">';
+      grouped.other.forEach((c) => {
+        html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${c.file_count || 0})</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    collectionPickerEl.innerHTML = html;
+    collectionsLoaded = true;
+  } catch (err) {
+    console.error('Failed to load collections:', err);
+  }
+}
+
 // Data fetching
 async function refresh() {
   try {
@@ -554,6 +715,9 @@ async function refresh() {
   } catch (err) {
     console.error('Prompts fetch failed:', err);
   }
+
+  // Load collections for picker (once)
+  loadCollections();
 }
 
 // Run management
@@ -561,11 +725,20 @@ async function startRun(query) {
   setStatus('Running...', 'running');
   setSmoke(false);
   renderProgress({ status: 'running', events: [] });
+  setRunAction('Running new decision', `Source: prompt editor • ${summarizeQuery(query)}`, 'running');
 
   const inputTitle = document.getElementById('input-title').value.trim();
   const inputNotes = document.getElementById('input-notes').value.trim();
   const inputArtifacts = document.getElementById('input-artifacts').value
     .split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Get selected collections
+  let selectedCollections = [];
+  if (collectionPickerEl) {
+    selectedCollections = Array.from(collectionPickerEl.selectedOptions)
+      .map(opt => opt.value)
+      .filter(v => v); // Filter out empty "auto-detect" option
+  }
 
   let inputId = null;
   if (inputNotes) {
@@ -581,6 +754,7 @@ async function startRun(query) {
   if (inputId) payload.input_id = inputId;
   if (inputTitle) payload.input_title = inputTitle;
   if (currentPromptId) payload.prompt_id = currentPromptId;
+  if (selectedCollections.length) payload.collections = selectedCollections;
 
   const resp = await fetchJSON('/api/run', {
     method: 'POST',
@@ -606,11 +780,13 @@ async function pollRun(runId) {
         setStatus('Complete', 'success');
         renderLatest(run);
         refresh();
+        setRunActionEphemeral('Run complete', 'Latest Decision updated.', 'success');
       } else if (run.status === 'failed') {
         clearInterval(pollTimer);
         setStatus('Failed', 'error');
         renderLatest(run);
         refresh();
+        setRunActionEphemeral('Run failed', 'See process logs for details.', 'error', 5000);
       } else {
         renderLatest(run);
       }
@@ -670,6 +846,7 @@ async function runPrompt(promptId) {
   currentPromptId = promptId;
   setStatus('Running...', 'running');
   setSmoke(false);
+  setRunAction('Re-running saved prompt', `Prompt ID ${promptId} • Output will appear in Latest Decision.`, 'running');
   updatePromptButton();
   pollRun(currentRunId);
 }
@@ -701,6 +878,8 @@ rerunBtn.addEventListener('click', async () => {
       setStatus('No run to rerun');
       return;
     }
+    const latestLabel = latest.meta?.input_title || latest.query || latest.id;
+    setRunAction('Re-running latest decision', `Source: ${summarizeQuery(latestLabel)} • Output will appear in Latest Decision.`, 'running');
     if (latest.meta?.prompt_id) {
       await runPrompt(latest.meta.prompt_id);
       return;
@@ -752,6 +931,14 @@ if (copyLatestBtn) {
   });
 }
 
+if (toggleEvidenceBtn && latestEvidenceEl) {
+  toggleEvidenceBtn.addEventListener('click', () => {
+    const isVisible = latestEvidenceEl.classList.contains('visible');
+    latestEvidenceEl.classList.toggle('visible', !isVisible);
+    toggleEvidenceBtn.textContent = isVisible ? 'Show Evidence' : 'Hide Evidence';
+  });
+}
+
 if (promptExamplesEl) {
   promptExamplesEl.addEventListener('click', (e) => {
     const example = e.target.dataset?.example;
@@ -791,6 +978,9 @@ if (runListEl) {
     }
 
     if (e.target.classList.contains('rerun-run')) {
+      const card = e.target.closest('.run-card');
+      const label = card?.dataset?.runTitle || card?.dataset?.runQuery || runId;
+      setRunAction('Re-running from history', `Source: ${summarizeQuery(label)} • Output will appear in Latest Decision.`, 'running');
       setStatus('Running...', 'running');
       setSmoke(false);
       const resp = await fetchJSON(`/api/runs/${runId}/rerun`, { method: 'POST' });

@@ -46,6 +46,11 @@
             <div class="form-advanced-body">
               <label for="input-title">Title</label>
               <input id="input-title" name="input-title" type="text" placeholder="Optional title for this decision" />
+              <label for="input-collections">Collections</label>
+              <select id="input-collections" name="input-collections" multiple class="collection-picker">
+                <option value="">Auto-detect domain</option>
+              </select>
+              <div class="collection-hint ui-muted">Hold Ctrl/Cmd to select multiple</div>
               <label for="input-notes">Supporting Notes</label>
               <textarea id="input-notes" name="input-notes" rows="4" placeholder="Paste notes, context, or data to include as evidence"></textarea>
               <label for="input-artifacts">File Paths / URLs</label>
@@ -66,7 +71,12 @@
           <h2 class="panel-title">Latest Decision</h2>
           <div class="panel-meta ui-mono" id="latest-time">—</div>
         </div>
+        <div class="run-action hidden" id="run-action">
+          <div class="run-action-title" id="run-action-title"></div>
+          <div class="run-action-detail ui-muted" id="run-action-detail"></div>
+        </div>
         <div class="latest-meta" id="latest-prompt"></div>
+        <div class="latest-models" id="latest-models"></div>
         <div class="pipeline-progress" id="pipeline-progress"></div>
         <div id="latest" class="markdown">
           <div class="empty-state">
@@ -74,8 +84,10 @@
             <p class="ui-muted">Conclave routes to the best models, gathers evidence, and deliberates.</p>
           </div>
         </div>
+        <div class="latest-evidence" id="latest-evidence"></div>
         <div class="latest-actions">
           <button type="button" class="ui-button ghost small" id="copy-latest">Copy Output</button>
+          <button type="button" class="ui-button ghost small" id="toggle-evidence">Show Evidence</button>
         </div>
       </section>
 
