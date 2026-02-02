@@ -136,6 +136,33 @@ class ConclavePipeline:
             })
 
             consensus = self._summarize(query, context, deliberation, route, quality)
+            if route.get("domain") == "bounty":
+                valid, note = self._validate_bounty_output(consensus.get("answer", ""))
+                if not valid:
+                    issues = quality.get("issues", [])
+                    issues.append("bounty_format")
+                    quality["issues"] = issues
+                    quality["insufficient"] = True
+                    if bool(self.config.quality.get("strict", True)):
+                        consensus = self._insufficient_evidence_answer(query, quality, note=note)
+                        artifacts = {
+                            "route": route,
+                            "context": context,
+                            "deliberation": deliberation,
+                            "quality": quality,
+                            "reconcile": {
+                                "previous_run_id": self.store.latest().get("id") if self.store.latest() else None,
+                                "changed": True,
+                            },
+                        }
+                        self.store.finalize_run(run_id, consensus, artifacts)
+                        audit.log("settlement.complete", {
+                            "consensus": consensus,
+                            "reconcile": artifacts["reconcile"],
+                            "quality": quality,
+                            "note": f"bounty_output_invalid: {note}",
+                        })
+                        return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
             previous = self.store.latest()
             reconcile = {
                 "previous_run_id": previous.get("id") if previous else None,
@@ -247,6 +274,32 @@ class ConclavePipeline:
         if route.get("domain") == "money":
             source_items.extend(self.money_source.fetch())
             source_errors.extend(self.money_source.drain_errors())
+        if route.get("domain") == "bounty" and user_inputs:
+            instructions = user_inputs[0].get("full_text") or ""
+            extra_queries = self._extract_focus_queries(str(instructions))
+            for query_term in extra_queries:
+                rag_results.extend(self.rag.search(query_term, limit=3))
+                file_results.extend(self.rag.search_files(query_term, limit=3))
+                if self.index.db_path.exists():
+                    nas_results.extend(self.index.search(query_term, limit=3))
+            base_dir = user_inputs[0].get("base_dir")
+            file_paths = self._extract_file_paths(str(instructions))
+            for rel_path in file_paths[:8]:
+                full_path = Path(rel_path)
+                if not full_path.is_absolute() and base_dir:
+                    full_path = Path(str(base_dir)) / rel_path
+                if not full_path.exists():
+                    continue
+                snippet = self._read_file_excerpt(full_path)
+                if not snippet:
+                    continue
+                source_items.append({
+                    "path": str(full_path),
+                    "title": rel_path,
+                    "snippet": snippet,
+                    "collection": "bounty-target",
+                    "source": "bounty-target",
+                })
         evidence, stats = self._select_evidence(
             rag_results,
             combined_files,
@@ -272,6 +325,62 @@ class ConclavePipeline:
             "user_inputs": user_inputs,
         }
 
+    def _extract_focus_queries(self, instructions: str) -> list[str]:
+        if not instructions:
+            return []
+        import re
+        from pathlib import Path
+        queries: list[str] = []
+        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\\.rs", instructions)
+        for path in paths:
+            queries.append(path)
+            queries.append(Path(path).name)
+        questions = re.findall(r"\\*\\*Question:\\*\\*\\s*(.+)", instructions)
+        for q in questions:
+            queries.append(q.strip())
+        constants = re.findall(r"([A-Z_]{3,})\\s*=", instructions)
+        queries.extend(constants)
+        unique = []
+        seen = set()
+        for item in queries:
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        return unique[:12]
+
+    def _extract_file_paths(self, instructions: str) -> list[str]:
+        if not instructions:
+            return []
+        import re
+        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\\.rs", instructions)
+        unique = []
+        seen = set()
+        for path in paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            unique.append(path)
+        return unique
+
+    def _read_file_excerpt(self, path: Path, max_lines: int = 120, max_chars: int = 2000) -> str:
+        try:
+            lines = path.read_text(errors="ignore").splitlines()
+        except Exception:
+            return ""
+        excerpt = []
+        total = 0
+        for idx, line in enumerate(lines[:max_lines], start=1):
+            entry = f"{idx}: {line}"
+            excerpt.append(entry)
+            total += len(entry)
+            if total > max_chars:
+                break
+        return "\n".join(excerpt)
+
     def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
         reasoner_model = plan.get("reasoner") or next(iter(plan.values()), None)
@@ -280,6 +389,14 @@ class ConclavePipeline:
         max_rounds = int(config.get("max_rounds", 3))
         require_agreement = bool(config.get("require_agreement", True))
         context_blob = self._format_context(context)
+        instructions = self._user_instructions(context)
+        domain = route.get("domain")
+        domain_instructions = ""
+        if domain == "bounty":
+            domain_instructions = (
+                "For bounty analysis, only propose findings that are supported by evidence snippets.\n"
+                "You must cite file paths and line numbers. If you cannot, say \"INSUFFICIENT EVIDENCE\".\n"
+            )
         rounds = []
         reasoner_out = ""
         critic_out = ""
@@ -297,6 +414,10 @@ class ConclavePipeline:
                     f"Previous draft:\n{reasoner_out}\n\n"
                     f"Critic feedback:\n{critic_out}\n"
                 )
+            if domain_instructions or instructions:
+                analysis_prompt += f"\n{domain_instructions}\n"
+                if instructions:
+                    analysis_prompt += f"Instructions from input:\n{instructions}\n"
             reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner")
 
             critic_prompt = (
@@ -304,6 +425,10 @@ class ConclavePipeline:
                 "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
                 f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
             )
+            if domain_instructions or instructions:
+                critic_prompt += f"\n{domain_instructions}\n"
+                if instructions:
+                    critic_prompt += f"Instructions from input:\n{instructions}\n"
             critic_out = self._call_model(critic_model, critic_prompt, role="critic")
             agreement = self._critic_agrees(critic_out)
             round_entry = {
@@ -340,18 +465,34 @@ class ConclavePipeline:
         plan = route.get("plan", {})
         summarizer_model = plan.get("summarizer") or plan.get("reasoner")
         context_blob = self._format_context(context)
+        instructions = self._user_instructions(context)
+        domain = route.get("domain")
         evidence_hint = (
             f"Evidence count: {quality.get('evidence_count', 0)}, "
             f"pdf_ratio: {quality.get('pdf_ratio', 0):.2f}, "
             f"off_domain_ratio: {quality.get('off_domain_ratio', 0):.2f}, "
             f"signal: {quality.get('max_signal_score', 0):.2f}"
         )
+        domain_instructions = ""
+        if domain == "bounty":
+            domain_instructions = (
+                "For bounty output, follow this format for each finding:\n"
+                "- Location (file:line)\n"
+                "- Root cause\n"
+                "- Attack scenario\n"
+                "- Severity assessment\n"
+                "- Why it's not a false positive\n"
+                "Only list findings that are directly supported by the provided evidence and cite file paths.\n"
+                "If you cannot cite file paths with line numbers from evidence, say \"INSUFFICIENT EVIDENCE\" and list what code files are needed.\n"
+            )
         summary_prompt = (
             "You are the summarizer. Produce a final consensus answer with bullet points."
             " Include an Evidence section listing the top sources (file paths or collection names)."
             " Include Risks/Uncertainties and Follow-ups. Include a confidence level (low/medium/high).\n\n"
             f"Question: {query}\n\nContext:\n{context_blob}\n\n"
             f"Evidence quality: {evidence_hint}\n\n"
+            f"{domain_instructions}\n"
+            f"{'Instructions from input:\\n' + instructions + '\\n' if instructions else ''}"
             f"Reasoner notes:\n{deliberation.get('reasoner', '')}\n\n"
             f"Critic notes:\n{deliberation.get('critic', '')}\n"
         )
@@ -461,7 +602,9 @@ class ConclavePipeline:
         evidence = context.get("evidence") or []
         if evidence:
             for item in evidence[:12]:
-                title = item.get("title") or item.get("path")
+                path = item.get("path")
+                line = item.get("line")
+                title = item.get("title") or (f"{path}:{line}" if path and line else path)
                 source = item.get("source", "context").upper()
                 meta = f"{item.get('collection', '')}".strip()
                 if meta:
@@ -536,7 +679,7 @@ class ConclavePipeline:
         lines.append("**Confidence Level**: Low")
         return "\n".join(lines)
 
-    def _insufficient_evidence_answer(self, query: str, quality: Dict[str, Any]) -> Dict[str, Any]:
+    def _insufficient_evidence_answer(self, query: str, quality: Dict[str, Any], note: str | None = None) -> Dict[str, Any]:
         details = []
         details.append(f"- Evidence count: {quality.get('evidence_count', 0)} (min {self.config.quality.get('min_evidence', 2)})")
         details.append(f"- Max signal score: {quality.get('max_signal_score', 0):.2f}")
@@ -545,6 +688,8 @@ class ConclavePipeline:
             details.append(f"- Retrieval errors: {len(quality.get('rag_errors', []))} (rag.tannner.com)")
         if quality.get("source_errors"):
             details.append(f"- Source fetch errors: {len(quality.get('source_errors', []))} (health/money)")
+        if note:
+            details.append(f"- Note: {note}")
         answer = "\n".join([
             "### Insufficient Evidence for High-Fidelity Answer",
             "",
@@ -610,8 +755,32 @@ class ConclavePipeline:
             "path": str(path),
             "title": path.stem,
             "snippet": snippet_text,
+            "full_text": content[:5000],
             "collection": "user-input",
+            "base_dir": str(path.parent),
         }]
+
+    def _user_instructions(self, context: Dict[str, Any]) -> str:
+        inputs = context.get("user_inputs") or []
+        for item in inputs:
+            full_text = item.get("full_text")
+            if full_text:
+                return str(full_text).strip()
+        return ""
+
+    def _validate_bounty_output(self, summary: str) -> tuple[bool, str]:
+        if not summary.strip():
+            return False, "empty output"
+        lower = summary.lower()
+        if "insufficient evidence" in lower:
+            return False, "model reported insufficient evidence"
+        import re
+        if "location" not in lower:
+            return False, "missing Location field"
+        path_line = re.search(r"(programs/|crates/|tests?/).+?:\\d+", summary)
+        if not path_line:
+            return False, "missing file:line references"
+        return True, ""
 
     def _score_item(
         self,
@@ -626,6 +795,15 @@ class ConclavePipeline:
         snippet = item.get("snippet") or item.get("match_line") or ""
         match_type = str(item.get("match_type", "")).lower()
         collection = item.get("collection") or item.get("source")
+        line = item.get("line")
+        if line is None and isinstance(snippet, str):
+            import re
+            match = re.match(r"\\s*(\\d+):", snippet)
+            if match:
+                try:
+                    line = int(match.group(1))
+                except Exception:
+                    line = None
         score_val = 0.0
         try:
             score_val = float(item.get("score", 0.0))
@@ -695,6 +873,7 @@ class ConclavePipeline:
             "signal_score": round(signal, 3),
             "mtime": mtime,
             "on_domain": on_domain if domain_known else None,
+            "line": line,
         }
 
     def _select_evidence(
@@ -708,11 +887,12 @@ class ConclavePipeline:
         user_items: List[Dict[str, Any]] | None = None,
         source_items: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        items = [
-            self._score_item(item, "rag", preferred_collections, domain, domain_paths) for item in rag
-        ] + [
-            self._score_item(item, "nas", preferred_collections, domain, domain_paths) for item in nas
-        ]
+        items = []
+        for item in rag:
+            items.append(self._score_item(item, "rag", preferred_collections, domain, domain_paths))
+        for item in nas:
+            enriched = self._maybe_attach_line(item)
+            items.append(self._score_item(enriched, "nas", preferred_collections, domain, domain_paths))
         if user_items:
             items.extend([
                 self._score_item(item, "user", preferred_collections, domain, domain_paths) for item in user_items
@@ -756,6 +936,43 @@ class ConclavePipeline:
             "off_domain": off_domain,
         }
         return selected, stats
+
+    def _maybe_attach_line(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        if item.get("line"):
+            return item
+        path = item.get("path") or item.get("file_path")
+        snippet = item.get("snippet") or item.get("match_line")
+        if not path or not snippet:
+            return item
+        line = self._find_line_number(path, snippet)
+        if line:
+            item = dict(item)
+            item["line"] = line
+        return item
+
+    def _find_line_number(self, path: str, snippet: str) -> int | None:
+        import re
+        try:
+            text = re.sub(r"<[^>]+>", "", snippet)
+            tokens = re.findall(r"[A-Za-z0-9_]+", text)
+            if not tokens:
+                return None
+            phrase = " ".join(tokens[:4]).strip()
+            needle = phrase.lower()
+            with open(path, "r", errors="ignore") as handle:
+                for idx, line in enumerate(handle, start=1):
+                    if needle and needle in line.lower():
+                        return idx
+            for token in tokens:
+                if len(token) < 6:
+                    continue
+                with open(path, "r", errors="ignore") as handle:
+                    for idx, line in enumerate(handle, start=1):
+                        if token in line:
+                            return idx
+        except Exception:
+            return None
+        return None
 
     def _evaluate_quality(self, context: Dict[str, Any]) -> Dict[str, Any]:
         stats = context.get("stats", {})

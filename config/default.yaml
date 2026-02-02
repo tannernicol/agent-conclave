@@ -206,6 +206,7 @@ index:
     - /mnt/nas/Homelab
     - /mnt/nas/Public
     - /mnt/nas/files
+    - /home/tanner/bug-bounty-recon/targets
   exclude_patterns:
     - "**/.git/**"
     - "**/node_modules/**"
@@ -256,6 +257,7 @@ quality:
       - /mnt/nas/Homelab/BugBounty/**
       - /home/tanner/bounty-rag/**
       - /home/tanner/security-library/**
+      - /home/tanner/bug-bounty-recon/targets/**
     health:
       - /mnt/nas/Homelab/Health/**
       - /home/tanner/health-data/**
