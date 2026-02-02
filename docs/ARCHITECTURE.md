@@ -1,17 +1,18 @@
 # Conclave Architecture
 
-Conclave is a V2 orchestration engine that produces a **versioned consensus decision** ("pope") using **local Ollama models** and **homelab context**.
+Conclave is a V2 orchestration engine that produces a **versioned consensus decision** ("pope") using **local context** and a **Claude↔Codex feedback loop**.
 
 ## Goals
 - Stable, inspectable role routing (no hardcoded providers)
 - Local-first execution (no paid APIs by default)
+- Claude↔Codex iterative agreement before final answer
 - Versioned decisions with a **latest consensus pointer**
 - Clear UI signals for deliberation and consensus
 
 ## Core components
-- **Model Registry**: capability cards + telemetry + health
+- **Model Registry**: capability cards + telemetry + health (includes CLI-based Claude/Codex)
 - **Planner**: deterministic role assignment by capability, latency, and reliability
-- **Pipeline**: router → reasoner → critic → summarizer
+- **Pipeline**: router → reasoner ↔ critic (multi-round) → summarizer
 - **Store**: versioned run history + `latest.json`
 - **Context**: homelab-search RAG + local NAS index
 
@@ -19,7 +20,7 @@ Conclave is a V2 orchestration engine that produces a **versioned consensus deci
 1. **Preflight**: ping models (20s max), update telemetry
 2. **Route**: detect domain (tax/health/bounty/general)
 3. **Retrieve**: query RAG collections + NAS index
-4. **Deliberate**: reasoner proposes, critic challenges
+4. **Deliberate**: Codex drafts, Claude critiques, Codex revises (repeat until agreement or max rounds)
 5. **Summarize**: final decision + confidence + pope title
 6. **Persist**: run JSON + update latest pointer
 
@@ -59,7 +60,7 @@ conclave/
 - Adds domain-specific collections by keyword patterns
 
 ## UI states
-- **Locked doors** during deliberation
+- **Status pill** shows run state
 - **White smoke** when consensus is reached
 - **Latest pope** always shown in the main panel
 
@@ -69,10 +70,11 @@ conclave/
   - routing + collections
   - retrieval samples
   - model invocations (role, model id, latency, ok/error)
-  - deliberation disagreements
+  - deliberation rounds + agreement
   - settlement and reconciliation
   - quality checks and evidence statistics
 
 ## Security & privacy
-- Local-only inference (Ollama), no paid API tokens by default
+- Local-first inference, no paid API tokens by default
+- Claude/Codex via CLI login (no API key required)
 - Explicit exclude patterns avoid secrets and media

@@ -13,6 +13,7 @@ Key sections:
 - `index`: NAS allowlist + exclude patterns + auto_build/refresh
 - `quality`: evidence gating + signal thresholds for high-fidelity answers
 - `mcp`: detected from `~/.mcp.json` and logged (no tool calls by default)
+- `deliberation`: multi-round Claude↔Codex agreement loop
 - `topics`: scheduled re-run topics
 
 ### RAG options
@@ -43,6 +44,18 @@ Schedules are validated with `systemd-analyze calendar` unless `--no-validate` i
 - `strict_exit_code`: exit code returned by CLI when strict mode blocks a response
 - `domain_paths`: optional path globs used to mark NAS items as on-domain by topic
 - `trust_explicit_collections`: when true, skip catalog lookup for explicit collections
+
+### Deliberation options
+- `deliberation.max_rounds`: maximum reasoner↔critic iterations
+- `deliberation.require_agreement`: if true, loop until critic returns `Verdict: AGREE`
+
+### CLI model options
+- `models.cards` can include `cli:claude` and `cli:codex`
+- `command`: array of CLI args to execute
+- `prompt_mode`: `arg` (append prompt as argument) or `stdin` (pipe prompt to stdin)
+- `stdin_flag`: optional flag to indicate stdin prompt (e.g. `-`)
+- `timeout_seconds`: per-call timeout
+- `env`: environment variables for the CLI process
 
 ### Sources
 - `sources.health_dashboard_url`: base URL for health.tannner.com (local health dashboard)

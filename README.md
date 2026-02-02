@@ -1,10 +1,11 @@
 # Conclave
 
-Model orchestration engine for Tanner's homelab. Conclave routes questions to local models, retrieves context from NAS/RAG, and produces versioned consensus decisions.
+Model orchestration engine for Tanner's homelab. Conclave routes questions to models, retrieves context from NAS/RAG, and produces versioned consensus decisions through a Claude↔Codex feedback loop.
 
 ## Highlights
 - Role-based planning (router, reasoner, critic, summarizer)
-- Local Ollama only (no paid APIs by default)
+- **Consensus loop**: Codex drafts → Claude critiques → Codex revises, repeated until agreement
+- CLI-based Claude/Codex integration (uses local logins, no API keys required)
 - Versioned decisions with a "latest pope" consensus
 - White-smoke UI when consensus is reached
 - Weekly reconciliation via systemd timer
@@ -65,7 +66,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - Conclave can query homelab-search (`rag.tannner.com`) when available.
 - Use `config/default.yaml` to tune roles, RAG collections, and index paths.
 - Bounty can invoke Conclave by calling `conclave run --query ...` from its pipeline.
-- Each run writes `audit.jsonl` with routing, role assignments, and disagreements.
+- Each run writes `audit.jsonl` with routing, role assignments, and multi-round disagreements/agreements.
 - Use `conclave schedule apply` to materialize systemd timers from topic schedules.
 - Add `--disable-legacy` to turn off the legacy `conclave-reconcile.timer`.
 - NAS index auto-build is off by default; run `conclave index` to build it.
