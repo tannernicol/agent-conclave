@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
+import re
 
 from conclave.config import get_config
 from conclave.pipeline import ConclavePipeline
@@ -22,6 +24,19 @@ config = get_config()
 pipeline = ConclavePipeline(config)
 store = DecisionStore(config.data_dir)
 registry = ModelRegistry.from_config(config.models)
+
+
+def _slugify(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9._-]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value)
+    return value.strip("-") or "input"
+
+
+def _inputs_dir() -> Path:
+    path = config.data_dir / "inputs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -49,9 +64,16 @@ async def run_api(payload: dict, background: BackgroundTasks):
     if not query:
         return JSONResponse({"error": "query required"}, status_code=400)
     collections = payload.get("collections")
-    run_id = store.create_run(query, meta={"source": "api"})
+    meta = {"source": "api"}
+    input_id = payload.get("input_id")
+    input_path = payload.get("input_path")
+    if input_id:
+        meta["input_path"] = str(_inputs_dir() / input_id)
+    if input_path:
+        meta["input_path"] = input_path
+    run_id = store.create_run(query, meta=meta)
     def _task():
-        pipeline.run(query, collections=collections, run_id=run_id)
+        pipeline.run(query, collections=collections, run_id=run_id, meta=meta)
     background.add_task(_task)
     return {"ok": True, "run_id": run_id}
 
@@ -94,6 +116,43 @@ async def reconcile_api(payload: dict, background: BackgroundTasks):
             pipeline.run(selected.get("query", ""), collections=selected.get("collections"), meta={"topic": topic})
     background.add_task(_task)
     return {"ok": True}
+
+
+@app.post("/api/inputs")
+async def inputs_api(payload: dict):
+    content = (payload.get("content") or "").strip()
+    if not content:
+        return JSONResponse({"error": "content required"}, status_code=400)
+    title = (payload.get("title") or "").strip()
+    question = (payload.get("question") or "").strip()
+    slug = _slugify(title or question or "input")
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"{ts}-{slug}.md"
+    path = _inputs_dir() / filename
+    body = []
+    if title:
+        body.append(f"# {title}")
+        body.append("")
+    if question:
+        body.append("## Question")
+        body.append(question)
+        body.append("")
+    body.append("## Notes")
+    body.append(content)
+    path.write_text("\n".join(body).strip() + "\n")
+    return {"ok": True, "input_id": filename, "path": str(path)}
+
+
+@app.get("/api/inputs")
+async def inputs_list_api(limit: int = 20):
+    items = []
+    for path in sorted(_inputs_dir().glob("*.md"), reverse=True)[:limit]:
+        items.append({
+            "id": path.name,
+            "path": str(path),
+            "modified_at": path.stat().st_mtime,
+        })
+    return {"inputs": items}
 
 
 def main():

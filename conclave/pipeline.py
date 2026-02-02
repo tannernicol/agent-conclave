@@ -54,6 +54,11 @@ class ConclavePipeline:
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
         self._audit = audit
         self._run_id = run_id
+        if meta:
+            try:
+                self.store.update_meta(run_id, meta)
+            except Exception:
+                pass
         audit.log("mcp.available", {"servers": list(load_mcp_servers().keys())})
         audit.log("run.start", {"query": query, "meta": meta or {}})
         try:
@@ -67,7 +72,7 @@ class ConclavePipeline:
             audit.log("route.decided", route)
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
-            context = self._retrieve_context(query, route)
+            context = self._retrieve_context(query, route, meta)
             stats = context.get("stats", {})
             self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"]), "evidence": stats.get("evidence_count", 0)}})
             audit.log("retrieve.complete", {
@@ -76,6 +81,7 @@ class ConclavePipeline:
                 "evidence_count": stats.get("evidence_count", 0),
                 "pdf_ratio": stats.get("pdf_ratio", 0),
                 "max_signal_score": stats.get("max_signal_score", 0),
+                "input_path": stats.get("input_path"),
                 "rag_errors": stats.get("rag_errors", []),
                 "rag_samples": context["rag"][:3],
                 "nas_samples": context["nas"][:3],
@@ -189,7 +195,7 @@ class ConclavePipeline:
             "rag_catalog": catalog,
         }
 
-    def _retrieve_context(self, query: str, route: Dict[str, Any]) -> Dict[str, Any]:
+    def _retrieve_context(self, query: str, route: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         rag_results: List[Dict[str, Any]] = []
         rag_cfg = self.config.rag
         max_per_collection = int(rag_cfg.get("max_results_per_collection", 8))
@@ -207,17 +213,21 @@ class ConclavePipeline:
         combined_files = file_results + nas_results
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
+        user_inputs = self._load_user_input(meta)
         evidence, stats = self._select_evidence(
             rag_results,
             combined_files,
             preferred_collections=route.get("collections", []),
             domain=route.get("domain"),
             domain_paths=self.config.quality.get("domain_paths", {}),
+            user_items=user_inputs,
         )
         rag_errors = self.rag.drain_errors()
         if rag_errors:
             stats["rag_errors"] = rag_errors
-        return {"rag": rag_results, "nas": combined_files, "evidence": evidence, "stats": stats}
+        if user_inputs:
+            stats["input_path"] = user_inputs[0].get("path")
+        return {"rag": rag_results, "nas": combined_files, "evidence": evidence, "stats": stats, "user_inputs": user_inputs}
 
     def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
@@ -459,6 +469,28 @@ class ConclavePipeline:
                     lines.append(numbered.sub("", stripped).strip())
         return lines
 
+    def _load_user_input(self, meta: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not meta:
+            return []
+        path_value = meta.get("input_path")
+        if not path_value:
+            return []
+        path = Path(str(path_value))
+        if not path.exists():
+            return []
+        try:
+            content = path.read_text(errors="ignore")
+        except Exception:
+            return []
+        snippet = content.strip().splitlines()
+        snippet_text = " ".join(snippet[:8])[:400]
+        return [{
+            "path": str(path),
+            "title": path.stem,
+            "snippet": snippet_text,
+            "collection": "user-input",
+        }]
+
     def _score_item(
         self,
         item: Dict[str, Any],
@@ -478,14 +510,17 @@ class ConclavePipeline:
         except Exception:
             score_val = 0.0
         ext = Path(path).suffix.lower() if path else ""
-        signal = 1.0 + min(score_val, 1.0) * 0.4
+        if source == "user":
+            signal = 2.0
+        else:
+            signal = 1.0 + min(score_val, 1.0) * 0.4
         if ext == ".pdf":
             signal -= 0.3
         elif ext in {".md", ".txt", ".json", ".yaml", ".yml", ".toml"}:
             signal += 0.3
-        if match_type == "filename":
+        if match_type == "filename" and source != "user":
             signal -= 0.2
-        if len(snippet.strip()) < 40:
+        if len(snippet.strip()) < 40 and source != "user":
             signal -= 0.2
         on_domain = False
         domain_known = False
@@ -502,6 +537,9 @@ class ConclavePipeline:
                     if fnmatch.fnmatch(path, pattern):
                         on_domain = True
                         break
+        if source == "user":
+            domain_known = True
+            on_domain = True
         if preferred_collections and domain_known:
             if on_domain:
                 signal += 0.2
@@ -543,12 +581,17 @@ class ConclavePipeline:
         preferred_collections: List[str] | None = None,
         domain: str | None = None,
         domain_paths: Dict[str, List[str]] | None = None,
+        user_items: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         items = [
             self._score_item(item, "rag", preferred_collections, domain, domain_paths) for item in rag
         ] + [
             self._score_item(item, "nas", preferred_collections, domain, domain_paths) for item in nas
         ]
+        if user_items:
+            items.extend([
+                self._score_item(item, "user", preferred_collections, domain, domain_paths) for item in user_items
+            ])
         items.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
         selected: List[Dict[str, Any]] = []
         seen = set()

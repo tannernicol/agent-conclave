@@ -65,7 +65,21 @@ async function refresh() {
 async function startRun(query) {
   setStatus('Locked doors. Deliberation in progress...');
   setSmoke(false);
+  const inputTitle = document.getElementById('input-title').value.trim();
+  const inputNotes = document.getElementById('input-notes').value.trim();
+  let inputId = null;
+  if (inputNotes) {
+    const inputResp = await fetchJSON('/api/inputs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: inputTitle, content: inputNotes, question: query }),
+    });
+    inputId = inputResp.input_id;
+  }
   const payload = { query };
+  if (inputId) {
+    payload.input_id = inputId;
+  }
   const resp = await fetchJSON('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -118,7 +132,23 @@ rerunBtn.addEventListener('click', async () => {
       setStatus('No prior consensus to re-run.');
       return;
     }
-    startRun(latest.query);
+    const payload = { query: latest.query };
+    if (latest.meta && latest.meta.input_path) {
+      payload.input_path = latest.meta.input_path;
+    }
+    setStatus('Locked doors. Deliberation in progress...');
+    setSmoke(false);
+    const resp = await fetchJSON('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    currentRunId = resp.run_id;
+    if (!currentRunId) {
+      setStatus('Unable to start run.');
+      return;
+    }
+    pollRun(currentRunId);
   } catch (err) {
     console.error(err);
   }

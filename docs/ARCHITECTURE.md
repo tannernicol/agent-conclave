@@ -50,6 +50,7 @@ conclave/
 - **homelab-search** (rag.tannner.com) for RAG collections
 - **NAS index** from an allowlist (with explicit exclusions)
 - **MCP registry** detected from `~/.mcp.json` (logged; no tool calls by default)
+- **User inputs** stored as Markdown in `~/.conclave/inputs` and treated as high-signal evidence
 
 ### RAG discovery
 - Pulls collection catalog from rag.tannner.com

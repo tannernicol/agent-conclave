@@ -50,6 +50,14 @@ class DecisionStore:
             return run
         self._locked_update(run_id, _update)
 
+    def update_meta(self, run_id: str, meta: Dict[str, Any]) -> None:
+        def _update(run: Dict[str, Any]) -> Dict[str, Any]:
+            current = run.get("meta", {}) or {}
+            current.update(meta)
+            run["meta"] = current
+            return run
+        self._locked_update(run_id, _update)
+
     def finalize_run(self, run_id: str, consensus: Dict[str, Any], artifacts: Dict[str, Any]) -> None:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
             run["status"] = "complete"

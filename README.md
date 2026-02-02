@@ -34,6 +34,7 @@ python -m conclave.cli reconcile --topic tax-checkup
 python -m conclave.cli schedule list
 python -m conclave.cli schedule apply --enable
 python -m conclave.cli run --query "..." --fail-on-insufficient
+python -m conclave.cli run --query "..." --input-file /path/to/notes.md
 ```
 
 ## Configuration
@@ -72,6 +73,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - RAG collections are discovered from `rag.tannner.com` and expanded by domain patterns.
 - High-fidelity mode is enforced via `quality.strict`; insufficient evidence returns a "needs more data" response.
 - Use `--fail-on-insufficient` (or `quality.strict_exit_code`) to make CLI runs fail on low evidence.
+- Web UI can persist supporting notes to Markdown and re-run decisions using that saved input.
 
 ## Tests (smoke + planner)
 

@@ -44,7 +44,10 @@ def cmd_plan(args: argparse.Namespace) -> None:
 def cmd_run(args: argparse.Namespace) -> None:
     config = get_config()
     pipeline = ConclavePipeline(config)
-    result = pipeline.run(args.query, collections=args.collection)
+    meta = {}
+    if args.input_file:
+        meta["input_path"] = args.input_file
+    result = pipeline.run(args.query, collections=args.collection, meta=meta if meta else None)
     _print({"run_id": result.run_id, "consensus": result.consensus})
     exit_code = int(config.quality.get("strict_exit_code", 0))
     if args.no_fail_on_insufficient:
@@ -167,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run")
     run.add_argument("--query", required=True)
     run.add_argument("--collection", action="append")
+    run.add_argument("--input-file")
     run.add_argument("--fail-on-insufficient", action="store_true")
     run.add_argument("--no-fail-on-insufficient", action="store_true")
 

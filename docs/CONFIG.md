@@ -42,3 +42,4 @@ Schedules are validated with `systemd-analyze calendar` unless `--no-validate` i
 - `off_domain_ratio_limit`: if evidence is mostly outside target collections, downshift confidence
 - `strict_exit_code`: exit code returned by CLI when strict mode blocks a response
 - `domain_paths`: optional path globs used to mark NAS items as on-domain by topic
+- `trust_explicit_collections`: when true, skip catalog lookup for explicit collections
