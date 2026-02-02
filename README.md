@@ -36,6 +36,7 @@ python -m conclave.cli schedule list
 python -m conclave.cli schedule apply --enable
 python -m conclave.cli run --query "..." --fail-on-insufficient
 python -m conclave.cli run --query "..." --input-file /path/to/notes.md
+python -m conclave.cli run --query "..." --output-md /tmp/conclave.md --progress --max-seconds 1200
 ```
 
 ## Configuration

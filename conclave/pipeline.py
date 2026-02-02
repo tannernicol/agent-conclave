@@ -53,6 +53,7 @@ class ConclavePipeline:
         self.store = DecisionStore(config.data_dir)
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
+        self._context_char_limit: int | None = None
         self.logger = logging.getLogger(__name__)
 
     def run(
@@ -66,6 +67,12 @@ class ConclavePipeline:
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
         self._audit = audit
         self._run_id = run_id
+        self._context_char_limit = None
+        if meta and meta.get("context_char_limit"):
+            try:
+                self._context_char_limit = int(meta.get("context_char_limit"))
+            except Exception:
+                self._context_char_limit = None
         if meta:
             try:
                 self.store.update_meta(run_id, meta)
@@ -188,6 +195,7 @@ class ConclavePipeline:
         finally:
             self._audit = None
             self._run_id = None
+            self._context_char_limit = None
 
     def _calibrate_models(self, run_id: str) -> None:
         calibration = self.config.calibration
@@ -300,9 +308,16 @@ class ConclavePipeline:
                     "collection": "bounty-target",
                     "source": "bounty-target",
                 })
+        evidence_limit = None
+        if meta and meta.get("evidence_limit"):
+            try:
+                evidence_limit = int(meta.get("evidence_limit"))
+            except Exception:
+                evidence_limit = None
         evidence, stats = self._select_evidence(
             rag_results,
             combined_files,
+            limit=evidence_limit or 12,
             preferred_collections=route.get("collections", []),
             domain=route.get("domain"),
             domain_paths=self.config.quality.get("domain_paths", {}),
@@ -619,13 +634,19 @@ class ConclavePipeline:
                 lines.append(
                     f"- [{source}] {title}{meta}: {item.get('snippet') or ''} [signal={item.get('signal_score', 0):.2f}]"
                 )
-            return "\n".join(lines)
+            blob = "\n".join(lines)
+            if self._context_char_limit:
+                return blob[: self._context_char_limit]
+            return blob
         for item in context.get("rag", [])[:12]:
             title = item.get("title") or item.get("name") or item.get("path")
             lines.append(f"- [RAG] {title}: {item.get('snippet') or item.get('match_line') or ''}")
         for item in context.get("nas", [])[:12]:
             lines.append(f"- [NAS] {item.get('title')}: {item.get('snippet', '')}")
-        return "\n".join(lines)
+        blob = "\n".join(lines)
+        if self._context_char_limit:
+            return blob[: self._context_char_limit]
+        return blob
 
     def _extract_confidence(self, summary: str) -> str:
         lower = summary.lower()

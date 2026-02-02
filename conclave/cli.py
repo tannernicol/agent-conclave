@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,8 +62,39 @@ def cmd_run(args: argparse.Namespace) -> None:
     meta = {}
     if args.input_file:
         meta["input_path"] = args.input_file
-    result = pipeline.run(args.query, collections=args.collection, meta=meta if meta else None)
+    if args.max_evidence:
+        meta["evidence_limit"] = args.max_evidence
+    if args.max_context_chars:
+        meta["context_char_limit"] = args.max_context_chars
+    store = pipeline.store
+    run_id = store.create_run(args.query, meta=meta if meta else None)
+    stop_event = threading.Event()
+    progress_thread = None
+    if args.progress:
+        progress_thread = threading.Thread(
+            target=_progress_printer,
+            args=(store, run_id, stop_event),
+            daemon=True,
+        )
+        progress_thread.start()
+        print(f"[conclave] run_id={run_id}", file=sys.stderr)
+    def _timeout_handler(signum, frame):
+        raise TimeoutError(f"run exceeded max_seconds={args.max_seconds}")
+    if args.max_seconds:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(int(args.max_seconds))
+    try:
+        result = pipeline.run(args.query, collections=args.collection, meta=meta if meta else None, run_id=run_id)
+    finally:
+        if args.max_seconds:
+            signal.alarm(0)
+        stop_event.set()
+        if progress_thread:
+            progress_thread.join(timeout=1.0)
     _print({"run_id": result.run_id, "consensus": result.consensus})
+    if args.output_md:
+        run = store.get_run(result.run_id) or {}
+        _write_markdown_report(Path(args.output_md), run, result.consensus, result.artifacts)
     fail_on, exit_code = _fail_on_insufficient(args, config)
     if fail_on and result.consensus.get("insufficient_evidence"):
         raise SystemExit(exit_code or 2)
@@ -175,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--query", required=True)
     run.add_argument("--collection", action="append")
     run.add_argument("--input-file")
+    run.add_argument("--output-md")
+    run.add_argument("--progress", action="store_true")
+    run.add_argument("--max-seconds", type=int)
+    run.add_argument("--max-evidence", type=int)
+    run.add_argument("--max-context-chars", type=int)
     run.add_argument("--fail-on-insufficient", action="store_true")
     run.add_argument("--no-fail-on-insufficient", action="store_true")
 
@@ -203,6 +243,106 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument("--disable-legacy", action="store_true")
 
     return parser
+
+
+def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.Event) -> None:
+    last = 0
+    while not stop_event.is_set():
+        run = store.get_run(run_id) or {}
+        events = run.get("events") or []
+        for event in events[last:]:
+            phase = event.get("phase") or event.get("event") or "event"
+            status = event.get("status") or ""
+            role = event.get("role")
+            model = event.get("model_id") or event.get("model")
+            detail = ""
+            if role and model:
+                detail = f"{role}->{model}"
+            elif model:
+                detail = str(model)
+            line = " ".join(part for part in [event.get("timestamp", ""), phase, status, detail] if part)
+            print(line.strip(), file=sys.stderr)
+        last = len(events)
+        if run.get("status") in ("complete", "failed"):
+            break
+        time.sleep(1.0)
+
+
+def _write_markdown_report(path: Path, run: dict, consensus: dict, artifacts: dict) -> None:
+    if path.is_dir():
+        filename = f"conclave-{run.get('id','run')}.md"
+        path = path / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = run.get("meta", {}) if run else {}
+    title = meta.get("input_title") or run.get("query") or "Conclave Decision"
+    route = artifacts.get("route", {}) if artifacts else {}
+    plan = route.get("plan", {}) if isinstance(route, dict) else {}
+    deliberation = artifacts.get("deliberation", {}) if artifacts else {}
+    evidence = (artifacts.get("context", {}) or {}).get("evidence", []) if artifacts else []
+    quality = artifacts.get("quality", {}) if artifacts else {}
+    lines = [
+        f"# {title}",
+        "",
+        f"- **Run ID**: {run.get('id','')}",
+        f"- **Status**: {run.get('status','')}",
+        f"- **Prompt ID**: {meta.get('prompt_id','')}",
+        f"- **Created**: {run.get('created_at','')}",
+        f"- **Completed**: {run.get('completed_at','')}",
+        "",
+        "## Consensus",
+        "",
+        (consensus or {}).get("answer", "").strip() or "No consensus.",
+        "",
+    ]
+    if plan:
+        lines.extend([
+            "## Models",
+            "",
+            f"- Router: {plan.get('router','')}",
+            f"- Reasoner: {plan.get('reasoner','')}",
+            f"- Critic: {plan.get('critic','')}",
+            f"- Summarizer: {plan.get('summarizer','')}",
+            "",
+        ])
+    disagreements = deliberation.get("disagreements") or []
+    if disagreements:
+        lines.append("## Disagreements")
+        lines.append("")
+        for item in disagreements[:10]:
+            lines.append(f"- {item}")
+        lines.append("")
+    if evidence:
+        lines.append("## Evidence (top)")
+        lines.append("")
+        for item in evidence[:12]:
+            label = item.get("title") or item.get("path") or item.get("name") or "Evidence"
+            item_path = item.get("path") or item.get("file_path") or ""
+            line = item.get("line")
+            score = item.get("signal_score")
+            loc = f"{item_path}:{line}" if item_path and line else item_path
+            score_text = f"{score:.2f}" if isinstance(score, (int, float)) else ""
+            lines.append(f"- {label} ({loc}) [{item.get('collection','')}] {score_text}".strip())
+        lines.append("")
+    if quality:
+        lines.extend([
+            "## Quality",
+            "",
+            f"- Evidence count: {quality.get('evidence_count','')}",
+            f"- Max signal: {quality.get('max_signal_score','')}",
+            f"- PDF ratio: {quality.get('pdf_ratio','')}",
+            f"- Off-domain ratio: {quality.get('off_domain_ratio','')}",
+            f"- Issues: {', '.join(quality.get('issues', []) or [])}",
+            "",
+        ])
+    run_dir = Path.home() / ".conclave" / "runs" / str(run.get("id", ""))
+    lines.extend([
+        "## Files",
+        "",
+        f"- run.json: {run_dir / 'run.json'}",
+        f"- audit.jsonl: {run_dir / 'audit.jsonl'}",
+        "",
+    ])
+    path.write_text("\n".join(lines).strip() + "\n")
 
 
 def main() -> None:
