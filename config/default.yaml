@@ -258,6 +258,7 @@ quality:
   min_strong_evidence: 1
   min_content_evidence: 1
   min_non_user_evidence: 1
+  min_required_collection_hits: 1
   pdf_ratio_limit: 0.7
   off_domain_ratio_limit: 0.5
   strict_exit_code: 2

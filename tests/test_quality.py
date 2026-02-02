@@ -26,12 +26,34 @@ class QualityTests(unittest.TestCase):
             rag,
             nas,
             preferred_collections=["health-rag"],
+            required_collections=["health-rag"],
             domain="health",
             domain_paths=config.quality.get("domain_paths", {}),
         )
         self.assertGreaterEqual(stats.get("domain_known", 0), 1)
         self.assertEqual(stats.get("off_domain", 0), 0)
         self.assertTrue(any(item.get("on_domain") for item in evidence if item.get("path")))
+
+    def test_required_collection_hits(self):
+        config = get_config()
+        pipeline = ConclavePipeline(config)
+        rag = [
+            {
+                "path": "/home/tanner/health-rag/doc.md",
+                "collection": "health-rag",
+                "snippet": "x" * 120,
+                "score": 0.9,
+            }
+        ]
+        evidence, stats = pipeline._select_evidence(
+            rag,
+            [],
+            required_collections=["health-rag"],
+            preferred_collections=["health-rag"],
+            domain="health",
+            domain_paths=config.quality.get("domain_paths", {}),
+        )
+        self.assertGreaterEqual(stats.get("required_collection_hits", 0), 1)
 
 
 if __name__ == "__main__":

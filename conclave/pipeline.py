@@ -234,23 +234,36 @@ class ConclavePipeline:
     def _route_query(self, query: str, collections: Optional[List[str]]) -> Dict[str, Any]:
         q = query.lower()
         domain = "general"
+        needs_tax = False
+        tax_keywords = ["tax", "irs", "1099", "w-2", "w2", "basis", "deduction", "section", "schedule f", "passive", "material participation", "hobby loss"]
         if any(word in q for word in ["tax", "irs", "1099", "w-2", "w2", "basis", "deduction"]):
             domain = "tax"
+            needs_tax = True
         if any(word in q for word in ["health", "lab", "blood", "apoe", "genetic", "medication", "vitamin", "supplement", "multivitamin"]):
             domain = "health"
         if any(word in q for word in ["money", "portfolio", "allocation", "asset mix", "rebalance", "invest"]):
             domain = "money"
         if any(word in q for word in ["farm", "farmland", "orchard", "agriculture", "acreage", "ranch", "livestock", "soil"]):
             domain = "agriculture"
+        if any(word in q for word in tax_keywords):
+            needs_tax = True
         if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
+        required_collections: List[str] = []
+        if needs_tax:
+            tax_collections = self.config.rag.get("domain_collections", {}).get("tax", [])
+            for item in tax_collections:
+                if item not in base:
+                    base.append(item)
+            required_collections = list(tax_collections)
         selected, catalog = self._expand_collections(domain, base, explicit=bool(collections))
         roles = ["router", "reasoner", "critic", "summarizer"]
         plan_with_rationale = self.planner.plan_with_rationale(roles, self.registry.list_models())
         return {
             "domain": domain,
             "collections": selected,
+            "required_collections": required_collections,
             "roles": roles,
             "plan": plan_with_rationale["assignments"],
             "rationale": plan_with_rationale["rationale"],
@@ -316,11 +329,13 @@ class ConclavePipeline:
                 evidence_limit = int(meta.get("evidence_limit"))
             except Exception:
                 evidence_limit = None
+        required_collections = route.get("required_collections", [])
         evidence, stats = self._select_evidence(
             rag_results,
             combined_files,
             limit=evidence_limit or 12,
             preferred_collections=route.get("collections", []),
+            required_collections=required_collections,
             domain=route.get("domain"),
             domain_paths=self.config.quality.get("domain_paths", {}),
             user_items=user_inputs,
@@ -917,6 +932,7 @@ class ConclavePipeline:
         nas: List[Dict[str, Any]],
         limit: int = 12,
         preferred_collections: List[str] | None = None,
+        required_collections: List[str] | None = None,
         domain: str | None = None,
         domain_paths: Dict[str, List[str]] | None = None,
         user_items: List[Dict[str, Any]] | None = None,
@@ -952,6 +968,8 @@ class ConclavePipeline:
         strong_count = 0
         content_count = 0
         non_user_count = 0
+        required_hits = 0
+        required_set = set([c for c in (required_collections or []) if c])
         for item in selected:
             if item.get("source") != "user":
                 non_user_count += 1
@@ -962,6 +980,10 @@ class ConclavePipeline:
             if item.get("source") != "user" and snippet_len >= 80 and match_type != "filename":
                 if float(item.get("signal_score", 0)) >= high_signal_threshold:
                     strong_count += 1
+            if required_set:
+                collection = item.get("collection")
+                if collection in required_set:
+                    required_hits += 1
         off_domain = 0
         on_domain = 0
         domain_known = 0
@@ -986,6 +1008,7 @@ class ConclavePipeline:
             "strong_evidence_count": strong_count,
             "content_evidence_count": content_count,
             "non_user_evidence_count": non_user_count,
+            "required_collection_hits": required_hits,
         }
         return selected, stats
 
@@ -1035,6 +1058,7 @@ class ConclavePipeline:
         min_strong = int(self.config.quality.get("min_strong_evidence", 1))
         min_content = int(self.config.quality.get("min_content_evidence", 1))
         min_non_user = int(self.config.quality.get("min_non_user_evidence", 1))
+        min_required = int(self.config.quality.get("min_required_collection_hits", 1))
         evidence_count = int(stats.get("evidence_count", 0))
         max_signal = float(stats.get("max_signal_score", 0))
         avg_signal = float(stats.get("avg_signal_score", 0))
@@ -1044,6 +1068,7 @@ class ConclavePipeline:
         strong_count = int(stats.get("strong_evidence_count", 0))
         content_count = int(stats.get("content_evidence_count", 0))
         non_user_count = int(stats.get("non_user_evidence_count", 0))
+        required_hits = int(stats.get("required_collection_hits", 0))
         issues = []
         if evidence_count < min_evidence:
             issues.append("insufficient_evidence")
@@ -1051,6 +1076,8 @@ class ConclavePipeline:
             issues.append("low_signal")
         if strong_count < min_strong or content_count < min_content or non_user_count < min_non_user:
             issues.append("low_relevance")
+        if required_hits < min_required:
+            issues.append("missing_required_evidence")
         if pdf_ratio > pdf_ratio_limit:
             issues.append("pdf_heavy")
         if domain_known and off_domain_ratio > off_domain_limit:
