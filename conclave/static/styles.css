@@ -356,6 +356,13 @@ textarea#query {
   border-radius: 10px;
   background: rgba(127, 255, 136, 0.04);
   border: 1px solid rgba(127, 255, 136, 0.15);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.output-success .markdown {
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .output-error {
@@ -516,14 +523,49 @@ textarea#query {
   font-size: 12px;
   color: var(--ui-text);
   margin-bottom: 8px;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .run-card-output.error {
   color: #ffb450;
+}
+
+/* Answer preview - shows actual content */
+.run-card-answer {
+  margin: 10px 0;
+  padding: 12px;
+  background: rgba(127, 255, 136, 0.04);
+  border: 1px solid rgba(127, 255, 136, 0.12);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ui-text);
+}
+
+.run-card-answer .answer-line {
+  margin-bottom: 6px;
+}
+
+.run-card-answer .answer-line:last-child {
+  margin-bottom: 0;
+}
+
+.run-card-answer strong {
+  color: var(--ui-text);
+  display: block;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.run-card-answer strong:first-child {
+  margin-top: 0;
+}
+
+.run-card-answer code {
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ui-surface-3);
 }
 
 .run-card-meta {

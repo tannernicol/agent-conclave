@@ -292,6 +292,14 @@ class ConclavePipeline:
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
         user_inputs = self._load_user_input(meta)
+        if not user_inputs and query:
+            user_inputs = [{
+                "title": "prompt",
+                "snippet": query,
+                "full_text": query,
+                "collection": "user-input",
+                "source": "user",
+            }]
         source_items: List[Dict[str, Any]] = []
         source_errors: List[Dict[str, Any]] = []
         if route.get("domain") == "health":
@@ -514,6 +522,22 @@ class ConclavePipeline:
                 "For bounty analysis, only propose findings that are supported by evidence snippets.\n"
                 "You must cite file paths and line numbers. If you cannot, say \"INSUFFICIENT EVIDENCE\".\n"
             )
+        elif domain == "agriculture":
+            domain_instructions = (
+                "RAG/MCP context is helpful but not required. Do not refuse due to missing sources.\n"
+                "Provide a prescriptive recommendation with assumptions and confidence.\n"
+                "Give 2-3 candidate subregions within ~60-90 minutes of Seattle as hypotheses to verify.\n"
+                "Suggest 2-3 low-touch farm business types (e.g., leased hay, chestnut orchard, Christmas trees, pasture lease),\n"
+                "and pick a top recommendation with a short rationale and due diligence checklist.\n"
+                "Do not mention model limitations or capabilities.\n"
+            )
+        else:
+            domain_instructions = (
+                "RAG/MCP context is helpful but not required. Do not refuse due to missing sources.\n"
+                "Provide a best-effort, prescriptive recommendation using your own reasoning.\n"
+                "State assumptions explicitly and ask follow-up questions, but still give an initial answer.\n"
+                "Do not mention model limitations or capabilities.\n"
+            )
         rounds = []
         reasoner_out = ""
         critic_out = ""
@@ -521,7 +545,9 @@ class ConclavePipeline:
 
         for round_idx in range(1, max_rounds + 1):
             analysis_prompt = (
-                "You are the reasoner. Provide a careful analysis and propose a decision.\n\n"
+                "You are the reasoner. Provide a careful analysis and propose a decision.\n"
+                "Be specific and prescriptive. If evidence is weak, proceed with assumptions and mark confidence low.\n"
+                "Do not refuse or defer just because data is missing.\n\n"
                 f"Question: {query}\n\nContext:\n{context_blob}\n"
             )
             if round_idx > 1:
@@ -539,6 +565,7 @@ class ConclavePipeline:
 
             critic_prompt = (
                 "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
+                "Do not reject the task as out-of-scope; focus on improving the draft.\n"
                 "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
                 f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
             )
@@ -604,6 +631,8 @@ class ConclavePipeline:
             )
         summary_prompt = (
             "You are the summarizer. Produce a final consensus answer with bullet points."
+            " Be prescriptive and actionable. Do not mention model limitations."
+            " If evidence is weak, proceed with best-effort assumptions and mark confidence low instead of refusing."
             " Include an Evidence section listing the top sources (file paths or collection names)."
             " Include Risks/Uncertainties and Follow-ups. Include a confidence level (low/medium/high).\n\n"
             f"Question: {query}\n\nContext:\n{context_blob}\n\n"
@@ -675,6 +704,14 @@ class ConclavePipeline:
                 audit.log("model.call", payload)
             if run_id:
                 self.store.append_event(run_id, {"phase": "model", **payload})
+            if not result.ok:
+                fallback = (self.registry.get_model(model_id) or {}).get("fallback_model")
+                if fallback and fallback != model_id:
+                    if audit:
+                        audit.log("model.fallback", {"role": role, "from": model_id, "to": fallback, "error": result.error})
+                    if run_id:
+                        self.store.append_event(run_id, {"phase": "model", "role": role, "model_id": model_id, "fallback_model": fallback, "error": result.error})
+                    return self._call_model(fallback, prompt, role=role)
             return result.text
         return ""
 
@@ -1207,12 +1244,13 @@ class ConclavePipeline:
             min_non_user = int(overrides.get("min_non_user_evidence", min_non_user))
             min_required = int(overrides.get("min_required_collection_hits", min_required))
         allow_user_only = bool(overrides.get("allow_user_only", False)) if overrides else False
+        user_only_ok = allow_user_only and user_input_present
         issues = []
-        if evidence_count < min_evidence:
+        if evidence_count < min_evidence and not user_only_ok:
             issues.append("insufficient_evidence")
-        if max_signal < low_signal_threshold and not (allow_user_only and user_input_present):
+        if max_signal < low_signal_threshold and not user_only_ok:
             issues.append("low_signal")
-        if strong_count < min_strong or content_count < min_content or non_user_count < min_non_user:
+        if (strong_count < min_strong or content_count < min_content or non_user_count < min_non_user) and not user_only_ok:
             issues.append("low_relevance")
         effective_required = min_required
         if required_count:

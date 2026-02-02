@@ -235,6 +235,46 @@ function renderSuccessOutput(text) {
   `;
 }
 
+// Render answer preview for run cards - show actual content
+function renderAnswerPreview(text) {
+  if (!text) return '';
+
+  const lines = text.split('\n');
+  const content = [];
+  let charCount = 0;
+  const maxChars = 400;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Skip "Insufficient Evidence" header if present
+    if (trimmed.includes('Insufficient Evidence')) continue;
+
+    // Skip markdown headers but keep the content
+    const headerMatch = trimmed.match(/^#{1,3}\s+(.*)$/);
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/) || trimmed.match(/^\d+\.\s+(.*)$/);
+
+    let lineContent = '';
+    if (headerMatch) {
+      lineContent = `<strong>${escapeHtml(headerMatch[1])}</strong>`;
+    } else if (bulletMatch) {
+      lineContent = `• ${renderInline(bulletMatch[1])}`;
+    } else {
+      lineContent = renderInline(trimmed);
+    }
+
+    charCount += trimmed.length;
+    content.push(lineContent);
+
+    if (charCount > maxChars || content.length >= 8) break;
+  }
+
+  if (!content.length) return '';
+
+  return content.map(c => `<div class="answer-line">${c}</div>`).join('');
+}
+
 // Pipeline progress
 function buildPhaseState(run) {
   const phases = [
@@ -340,7 +380,12 @@ function renderLatest(latest) {
   if (isInsufficientEvidence(latest.consensus)) {
     latestEl.innerHTML = renderInsufficientEvidence(latest.consensus, latest);
   } else {
-    latestEl.innerHTML = renderSuccessOutput(latest.consensus.answer || '');
+    // Show full markdown output for successful consensus
+    latestEl.innerHTML = `
+      <div class="output-success">
+        <div class="markdown">${renderMarkdown(latest.consensus.answer || '')}</div>
+      </div>
+    `;
   }
 
   renderProgress(latest);
@@ -376,23 +421,16 @@ function renderRuns(runs) {
       statusChip = '<span class="status-chip complete">Complete</span>';
     }
 
-    let output = '';
+    let outputHtml = '';
     if (run.consensus?.answer) {
       if (isInsufficient) {
-        output = 'Insufficient evidence to provide confident answer';
+        outputHtml = `<div class="run-card-output error">Insufficient evidence to provide confident answer</div>`;
       } else {
-        // Extract first meaningful line
-        const lines = run.consensus.answer.split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed && !trimmed.startsWith('#')) {
-            output = trimmed.replace(/^[-*•]\s+/, '').slice(0, 120);
-            break;
-          }
-        }
+        // Show the actual answer content (first 500 chars or key bullets)
+        outputHtml = `<div class="run-card-answer">${renderAnswerPreview(run.consensus.answer)}</div>`;
       }
     } else if (run.error) {
-      output = run.error;
+      outputHtml = `<div class="run-card-output error">${escapeHtml(run.error)}</div>`;
     }
 
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
@@ -405,9 +443,9 @@ function renderRuns(runs) {
             ${statusChip}
           </div>
           <div class="run-card-query">${escapeHtml(run.query || '')}</div>
-          ${output ? `<div class="run-card-output ${hasError ? 'error' : ''}">${escapeHtml(output)}</div>` : ''}
+          ${outputHtml}
           <details class="run-card-expand">
-            <summary>View details</summary>
+            <summary>View full details</summary>
             <div class="run-card-detail">
               ${renderRunDetail(run)}
             </div>
