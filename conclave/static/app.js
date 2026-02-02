@@ -333,6 +333,14 @@ function summarizeEvent(event) {
   if (event.status) detail = event.status;
   if (event.role && event.model_id) detail = `${event.role} → ${event.model_id}`;
   if (event.role && event.ok === false) detail += ' (failed)';
+  if (event.phase === 'route' && event.status === 'done') {
+    const plan = event.models || (event.route && event.route.plan) || {};
+    const parts = [];
+    if (plan.reasoner) parts.push(`reasoner:${plan.reasoner}`);
+    if (plan.critic) parts.push(`critic:${plan.critic}`);
+    if (plan.summarizer) parts.push(`summarizer:${plan.summarizer}`);
+    if (parts.length) detail = parts.join(' ');
+  }
   if (event.phase === 'quality' && event.issues && event.issues.length) {
     detail = `issues: ${event.issues.join(', ')}`;
   }

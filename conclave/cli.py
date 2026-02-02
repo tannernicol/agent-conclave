@@ -343,6 +343,17 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
                 detail = f"{role}->{model}"
             elif model:
                 detail = str(model)
+            if phase == "route" and status == "done":
+                plan = event.get("models") or (event.get("route") or {}).get("plan") or {}
+                parts = []
+                if plan.get("reasoner"):
+                    parts.append(f"reasoner->{plan.get('reasoner')}")
+                if plan.get("critic"):
+                    parts.append(f"critic->{plan.get('critic')}")
+                if plan.get("summarizer"):
+                    parts.append(f"summarizer->{plan.get('summarizer')}")
+                if parts:
+                    detail = " ".join(parts)
             line = " ".join(part for part in [event.get("timestamp", ""), phase, status, detail] if part)
             print(line.strip(), file=sys.stderr)
         last = len(events)

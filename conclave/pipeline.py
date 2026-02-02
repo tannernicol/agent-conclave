@@ -87,7 +87,7 @@ class ConclavePipeline:
 
             self.store.append_event(run_id, {"phase": "route", "status": "start"})
             route = self._route_query(query, collections)
-            self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route})
+            self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route, "models": route.get("plan", {})})
             audit.log("route.decided", route)
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
