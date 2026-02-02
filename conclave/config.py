@@ -78,6 +78,10 @@ class Config:
         return self.raw.get("quality", {})
 
     @property
+    def sources(self) -> Dict[str, Any]:
+        return self.raw.get("sources", {})
+
+    @property
     def topics(self) -> list[dict]:
         return self.raw.get("topics", [])
 

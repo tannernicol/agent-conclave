@@ -16,6 +16,7 @@ from conclave.rag import RagClient, NasIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
 from conclave.mcp import load_mcp_servers
+from conclave.sources import HealthDashboardClient, MoneyClient
 
 
 @dataclass
@@ -32,6 +33,15 @@ class ConclavePipeline:
         self.planner = Planner.from_config(config.planner)
         self.ollama = OllamaClient()
         self.rag = RagClient(config.rag.get("base_url", "http://localhost:8091"))
+        sources_cfg = config.sources
+        self.health_source = HealthDashboardClient(
+            base_url=sources_cfg.get("health_dashboard_url", "http://127.0.0.1:8094"),
+            pages=list(sources_cfg.get("health_pages", ["/my-health.html", "/recommendations.html"])),
+        )
+        self.money_source = MoneyClient(
+            base_url=sources_cfg.get("money_api_url", "http://127.0.0.1:8000"),
+            endpoints=list(sources_cfg.get("money_endpoints", ["/api/summary", "/api/networth"])),
+        )
         self.index = NasIndex(
             data_dir=config.data_dir,
             allowlist=config.index.get("allowlist", []),
@@ -83,8 +93,10 @@ class ConclavePipeline:
                 "max_signal_score": stats.get("max_signal_score", 0),
                 "input_path": stats.get("input_path"),
                 "rag_errors": stats.get("rag_errors", []),
+                "source_errors": stats.get("source_errors", []),
                 "rag_samples": context["rag"][:3],
                 "nas_samples": context["nas"][:3],
+                "source_samples": context.get("sources", [])[:2],
             })
             quality = self._evaluate_quality(context)
             audit.log("quality.check", quality)
@@ -178,8 +190,10 @@ class ConclavePipeline:
         domain = "general"
         if any(word in q for word in ["tax", "irs", "1099", "w-2", "w2", "basis", "deduction"]):
             domain = "tax"
-        if any(word in q for word in ["health", "lab", "blood", "apoe", "genetic", "medication"]):
+        if any(word in q for word in ["health", "lab", "blood", "apoe", "genetic", "medication", "vitamin", "supplement", "multivitamin"]):
             domain = "health"
+        if any(word in q for word in ["money", "portfolio", "allocation", "asset mix", "rebalance", "invest"]):
+            domain = "money"
         if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
@@ -214,6 +228,14 @@ class ConclavePipeline:
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
         user_inputs = self._load_user_input(meta)
+        source_items: List[Dict[str, Any]] = []
+        source_errors: List[Dict[str, Any]] = []
+        if route.get("domain") == "health":
+            source_items.extend(self.health_source.fetch())
+            source_errors.extend(self.health_source.drain_errors())
+        if route.get("domain") == "money":
+            source_items.extend(self.money_source.fetch())
+            source_errors.extend(self.money_source.drain_errors())
         evidence, stats = self._select_evidence(
             rag_results,
             combined_files,
@@ -221,13 +243,23 @@ class ConclavePipeline:
             domain=route.get("domain"),
             domain_paths=self.config.quality.get("domain_paths", {}),
             user_items=user_inputs,
+            source_items=source_items,
         )
         rag_errors = self.rag.drain_errors()
         if rag_errors:
             stats["rag_errors"] = rag_errors
+        if source_errors:
+            stats["source_errors"] = source_errors
         if user_inputs:
             stats["input_path"] = user_inputs[0].get("path")
-        return {"rag": rag_results, "nas": combined_files, "evidence": evidence, "stats": stats, "user_inputs": user_inputs}
+        return {
+            "rag": rag_results,
+            "nas": combined_files,
+            "sources": source_items,
+            "evidence": evidence,
+            "stats": stats,
+            "user_inputs": user_inputs,
+        }
 
     def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
@@ -423,6 +455,8 @@ class ConclavePipeline:
         details.append(f"- PDF ratio: {quality.get('pdf_ratio', 0):.2f}")
         if quality.get("rag_errors"):
             details.append(f"- Retrieval errors: {len(quality.get('rag_errors', []))} (rag.tannner.com)")
+        if quality.get("source_errors"):
+            details.append(f"- Source fetch errors: {len(quality.get('source_errors', []))} (health/money)")
         answer = "\n".join([
             "### Insufficient Evidence for High-Fidelity Answer",
             "",
@@ -512,6 +546,8 @@ class ConclavePipeline:
         ext = Path(path).suffix.lower() if path else ""
         if source == "user":
             signal = 2.0
+        elif source == "source":
+            signal = 1.6
         else:
             signal = 1.0 + min(score_val, 1.0) * 0.4
         if ext == ".pdf":
@@ -537,7 +573,7 @@ class ConclavePipeline:
                     if fnmatch.fnmatch(path, pattern):
                         on_domain = True
                         break
-        if source == "user":
+        if source == "user" or source == "source":
             domain_known = True
             on_domain = True
         if preferred_collections and domain_known:
@@ -582,6 +618,7 @@ class ConclavePipeline:
         domain: str | None = None,
         domain_paths: Dict[str, List[str]] | None = None,
         user_items: List[Dict[str, Any]] | None = None,
+        source_items: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         items = [
             self._score_item(item, "rag", preferred_collections, domain, domain_paths) for item in rag
@@ -591,6 +628,10 @@ class ConclavePipeline:
         if user_items:
             items.extend([
                 self._score_item(item, "user", preferred_collections, domain, domain_paths) for item in user_items
+            ])
+        if source_items:
+            items.extend([
+                self._score_item(item, "source", preferred_collections, domain, domain_paths) for item in source_items
             ])
         items.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
         selected: List[Dict[str, Any]] = []
@@ -651,6 +692,8 @@ class ConclavePipeline:
             issues.append("off_domain")
         if stats.get("rag_errors"):
             issues.append("rag_errors")
+        if stats.get("source_errors"):
+            issues.append("source_errors")
         return {
             "evidence_count": evidence_count,
             "max_signal_score": max_signal,
@@ -658,6 +701,7 @@ class ConclavePipeline:
             "pdf_ratio": pdf_ratio,
             "off_domain_ratio": off_domain_ratio,
             "rag_errors": stats.get("rag_errors", []),
+            "source_errors": stats.get("source_errors", []),
             "issues": issues,
             "insufficient": bool(issues and ("insufficient_evidence" in issues or "low_signal" in issues)),
         }

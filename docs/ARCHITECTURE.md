@@ -51,6 +51,7 @@ conclave/
 - **NAS index** from an allowlist (with explicit exclusions)
 - **MCP registry** detected from `~/.mcp.json` (logged; no tool calls by default)
 - **User inputs** stored as Markdown in `~/.conclave/inputs` and treated as high-signal evidence
+- **Health dashboard** pages (health.tannner.com) and **Money API** (money.tannner.com) can be ingested as evidence
 
 ### RAG discovery
 - Pulls collection catalog from rag.tannner.com

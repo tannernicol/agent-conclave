@@ -74,6 +74,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - High-fidelity mode is enforced via `quality.strict`; insufficient evidence returns a "needs more data" response.
 - Use `--fail-on-insufficient` (or `quality.strict_exit_code`) to make CLI runs fail on low evidence.
 - Web UI can persist supporting notes to Markdown and re-run decisions using that saved input.
+- Health dashboard (health.tannner.com) and money API (money.tannner.com) are ingested as evidence for health/finance queries.
 
 ## Tests (smoke + planner)
 

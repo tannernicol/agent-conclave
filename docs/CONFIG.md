@@ -43,3 +43,9 @@ Schedules are validated with `systemd-analyze calendar` unless `--no-validate` i
 - `strict_exit_code`: exit code returned by CLI when strict mode blocks a response
 - `domain_paths`: optional path globs used to mark NAS items as on-domain by topic
 - `trust_explicit_collections`: when true, skip catalog lookup for explicit collections
+
+### Sources
+- `sources.health_dashboard_url`: base URL for health.tannner.com (local health dashboard)
+- `sources.health_pages`: pages to scrape for health context
+- `sources.money_api_url`: base URL for money.tannner.com
+- `sources.money_endpoints`: API endpoints to include as evidence

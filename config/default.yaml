@@ -108,6 +108,7 @@ rag:
     tax: [tax-rag, tax-data, homelab-rag]
     health: [health-rag, health-data, homelab-rag]
     bounty: [bounty-rag, bugbounty-rag, security-library]
+    money: [homelab-rag, prompts]
   dynamic_patterns:
     bounty:
       - "bounty"
@@ -122,6 +123,10 @@ rag:
       - "tax"
       - "irs"
       - "finance"
+    money:
+      - "money"
+      - "finance"
+      - "portfolio"
 
 index:
   enabled: true
@@ -183,6 +188,22 @@ quality:
       - /mnt/nas/Homelab/Tax/**
       - /home/tanner/tax-data/**
       - /home/tanner/tax-rag/**
+    money:
+      - /mnt/nas/Homelab/Finance/**
+      - /mnt/nas/Homelab/Money/**
+      - /home/tanner/money/**
+
+sources:
+  health_dashboard_url: http://127.0.0.1:8094
+  health_pages:
+    - /my-health.html
+    - /recommendations.html
+    - /genetic-grade.html
+  money_api_url: http://127.0.0.1:8000
+  money_endpoints:
+    - /api/summary
+    - /api/networth
+    - /api/investments/performance
 
 topics:
   - id: tax-checkup
