@@ -358,9 +358,6 @@ def _write_markdown_report(path: Path, run: dict, consensus: dict, artifacts: di
     path.parent.mkdir(parents=True, exist_ok=True)
     meta = run.get("meta", {}) if run else {}
     title = meta.get("input_title") or run.get("query") or "Conclave Decision"
-    route = artifacts.get("route", {}) if artifacts else {}
-    plan = route.get("plan", {}) if isinstance(route, dict) else {}
-    deliberation = artifacts.get("deliberation", {}) if artifacts else {}
     evidence = (artifacts.get("context", {}) or {}).get("evidence", []) if artifacts else []
     quality = artifacts.get("quality", {}) if artifacts else {}
     lines = [
@@ -372,28 +369,11 @@ def _write_markdown_report(path: Path, run: dict, consensus: dict, artifacts: di
         f"- **Created**: {run.get('created_at','')}",
         f"- **Completed**: {run.get('completed_at','')}",
         "",
-        "## Consensus",
+        "## Final Consensus",
         "",
         (consensus or {}).get("answer", "").strip() or "No consensus.",
         "",
     ]
-    if plan:
-        lines.extend([
-            "## Models",
-            "",
-            f"- Router: {plan.get('router','')}",
-            f"- Reasoner: {plan.get('reasoner','')}",
-            f"- Critic: {plan.get('critic','')}",
-            f"- Summarizer: {plan.get('summarizer','')}",
-            "",
-        ])
-    disagreements = deliberation.get("disagreements") or []
-    if disagreements:
-        lines.append("## Disagreements")
-        lines.append("")
-        for item in disagreements[:10]:
-            lines.append(f"- {item}")
-        lines.append("")
     if evidence:
         lines.append("## Evidence (top)")
         lines.append("")
