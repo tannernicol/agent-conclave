@@ -27,6 +27,12 @@ class DecisionStore:
     def _latest_path(self) -> Path:
         return self.data_dir / "latest.json"
 
+    def _prompt_latest_dir(self) -> Path:
+        return self.data_dir / "prompts" / "latest"
+
+    def _prompt_latest_path(self, prompt_id: str) -> Path:
+        return self._prompt_latest_dir() / f"{prompt_id}.json"
+
     def create_run(self, query: str, meta: Dict[str, Any] | None = None) -> str:
         run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         run_dir = self._runs_dir() / run_id
@@ -71,6 +77,10 @@ class DecisionStore:
             return
         self._latest_path().parent.mkdir(parents=True, exist_ok=True)
         self._latest_path().write_text(json.dumps(run, indent=2))
+        prompt_id = (run.get("meta") or {}).get("prompt_id")
+        if prompt_id:
+            self._prompt_latest_dir().mkdir(parents=True, exist_ok=True)
+            self._prompt_latest_path(str(prompt_id)).write_text(json.dumps(run, indent=2))
 
     def fail_run(self, run_id: str, error: str) -> None:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
@@ -94,6 +104,15 @@ class DecisionStore:
             return None
         try:
             return json.loads(self._latest_path().read_text())
+        except Exception:
+            return None
+
+    def latest_for_prompt(self, prompt_id: str) -> Dict[str, Any] | None:
+        path = self._prompt_latest_path(prompt_id)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
         except Exception:
             return None
 

@@ -26,7 +26,10 @@
 
     <main class="app">
       <section class="ui-card panel input-panel">
-        <h2 class="panel-title">New Prompt</h2>
+        <div class="panel-header">
+          <h2 class="panel-title">Prompt Editor</h2>
+          <div class="panel-meta ui-mono" id="prompt-status">Not saved</div>
+        </div>
         <form id="query-form" class="form-grid">
           <label for="query">Prompt</label>
           <textarea id="query" name="query" rows="3" placeholder="Ask about tax, health, money, or a big decision..."></textarea>
@@ -36,6 +39,7 @@
           <textarea id="input-notes" name="input-notes" rows="6" placeholder="Paste notes or context to persist. These will be saved and used as evidence."></textarea>
           <div class="actions">
             <button type="submit" class="ui-button primary">Run</button>
+            <button type="button" class="ui-button" id="save-prompt">Save Prompt</button>
             <button type="button" class="ui-button ghost" id="clear-form">Clear</button>
           </div>
         </form>
@@ -66,6 +70,14 @@
           </div>
           <div class="table-body" id="run-rows"></div>
         </div>
+      </section>
+
+      <section class="ui-card panel prompts-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Saved Prompts</h2>
+          <div class="panel-meta ui-mono" id="prompt-count">0 saved</div>
+        </div>
+        <div class="prompt-list" id="prompt-list"></div>
       </section>
     </main>
 

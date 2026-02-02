@@ -180,6 +180,7 @@ textarea {
   display: flex;
   gap: 12px;
   margin-top: 4px;
+  flex-wrap: wrap;
 }
 
 .ui-button {
@@ -210,6 +211,39 @@ textarea {
 
 .runs-panel {
   grid-column: 1 / -1;
+}
+
+.prompts-panel {
+  grid-column: 1 / -1;
+}
+
+.prompt-list {
+  display: grid;
+  gap: 12px;
+}
+
+.prompt-card {
+  background: var(--ui-surface-2);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.prompt-card-title {
+  font-weight: 600;
+}
+
+.prompt-card-meta {
+  font-size: 11px;
+  color: var(--ui-muted-2);
+}
+
+.prompt-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .table {

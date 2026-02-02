@@ -111,7 +111,7 @@ class ConclavePipeline:
                     "deliberation": {},
                     "quality": quality,
                     "reconcile": {
-                        "previous_run_id": self.store.latest().get("id") if self.store.latest() else None,
+                        "previous_run_id": self._latest_for_meta(meta),
                         "changed": True,
                     },
                 }
@@ -151,7 +151,7 @@ class ConclavePipeline:
                             "deliberation": deliberation,
                             "quality": quality,
                             "reconcile": {
-                                "previous_run_id": self.store.latest().get("id") if self.store.latest() else None,
+                                "previous_run_id": self._latest_for_meta(meta),
                                 "changed": True,
                             },
                         }
@@ -163,7 +163,7 @@ class ConclavePipeline:
                             "note": f"bounty_output_invalid: {note}",
                         })
                         return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
-            previous = self.store.latest()
+            previous = self._latest_for_meta(meta)
             reconcile = {
                 "previous_run_id": previous.get("id") if previous else None,
                 "changed": bool(previous and previous.get("consensus", {}).get("answer") != consensus.get("answer")),
@@ -351,6 +351,13 @@ class ConclavePipeline:
             seen.add(key)
             unique.append(item)
         return unique[:12]
+
+    def _latest_for_meta(self, meta: Optional[Dict[str, Any]]) -> Dict[str, Any] | None:
+        if meta and meta.get("prompt_id"):
+            latest = self.store.latest_for_prompt(str(meta.get("prompt_id")))
+            if latest:
+                return latest
+        return self.store.latest()
 
     def _extract_file_paths(self, instructions: str) -> list[str]:
         if not instructions:

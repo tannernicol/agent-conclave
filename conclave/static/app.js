@@ -7,9 +7,14 @@ const runsEl = document.getElementById('run-rows');
 const form = document.getElementById('query-form');
 const rerunBtn = document.getElementById('rerun-latest');
 const clearBtn = document.getElementById('clear-form');
+const savePromptBtn = document.getElementById('save-prompt');
+const promptStatusEl = document.getElementById('prompt-status');
+const promptListEl = document.getElementById('prompt-list');
+const promptCountEl = document.getElementById('prompt-count');
 
 let currentRunId = null;
 let pollTimer = null;
+let currentPromptId = null;
 
 async function fetchJSON(url, options) {
   const resp = await fetch(url, options);
@@ -21,6 +26,12 @@ async function fetchJSON(url, options) {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function setPromptStatus(text) {
+  if (promptStatusEl) {
+    promptStatusEl.textContent = text;
+  }
 }
 
 function setSmoke(active) {
@@ -315,6 +326,33 @@ function renderRuns(runs) {
   });
 }
 
+function renderPromptList(prompts) {
+  if (!promptListEl) return;
+  promptListEl.innerHTML = '';
+  if (!prompts.length) {
+    promptListEl.innerHTML = '<div class="empty-state">No saved prompts yet.</div>';
+    if (promptCountEl) promptCountEl.textContent = '0 saved';
+    return;
+  }
+  if (promptCountEl) promptCountEl.textContent = `${prompts.length} saved`;
+  prompts.forEach((prompt) => {
+    const card = document.createElement('div');
+    card.className = 'prompt-card';
+    const title = prompt.title || prompt.query || prompt.id;
+    const updated = prompt.updated_at ? formatTime(prompt.updated_at) : '—';
+    card.innerHTML = `
+      <div class="prompt-card-title">${escapeHtml(title)}</div>
+      <div class="prompt-card-meta">Updated: ${escapeHtml(updated)}</div>
+      <div class="prompt-card-meta clamp-2">${escapeHtml(prompt.query || '')}</div>
+      <div class="prompt-card-actions">
+        <button class="ui-button" data-action="load" data-id="${prompt.id}">Load</button>
+        <button class="ui-button primary" data-action="run" data-id="${prompt.id}">Run</button>
+      </div>
+    `;
+    promptListEl.appendChild(card);
+  });
+}
+
 async function refresh() {
   try {
     const status = await fetchJSON('/api/status');
@@ -325,6 +363,12 @@ async function refresh() {
   try {
     const runs = await fetchJSON('/api/runs?limit=8');
     renderRuns(runs.runs || []);
+  } catch (err) {
+    console.error(err);
+  }
+  try {
+    const prompts = await fetchJSON('/api/prompts?limit=20');
+    renderPromptList(prompts.prompts || []);
   } catch (err) {
     console.error(err);
   }
@@ -351,6 +395,9 @@ async function startRun(query) {
   if (inputTitle) {
     payload.input_title = inputTitle;
   }
+  if (currentPromptId) {
+    payload.prompt_id = currentPromptId;
+  }
   const resp = await fetchJSON('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -361,6 +408,54 @@ async function startRun(query) {
     setStatus('Unable to start run.');
     return;
   }
+  pollRun(currentRunId);
+}
+
+async function savePrompt() {
+  const query = document.getElementById('query').value.trim();
+  const title = document.getElementById('input-title').value.trim();
+  const notes = document.getElementById('input-notes').value.trim();
+  if (!query) {
+    setPromptStatus('Prompt required');
+    return;
+  }
+  const payload = { title, query, notes };
+  let resp;
+  if (currentPromptId) {
+    resp = await fetchJSON(`/api/prompts/${currentPromptId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } else {
+    resp = await fetchJSON('/api/prompts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+  currentPromptId = resp.prompt.id;
+  setPromptStatus(`Saved: ${currentPromptId}`);
+  refresh();
+}
+
+async function loadPrompt(promptId) {
+  const prompt = await fetchJSON(`/api/prompts/${promptId}`);
+  document.getElementById('query').value = prompt.query || '';
+  document.getElementById('input-title').value = prompt.title || '';
+  document.getElementById('input-notes').value = prompt.notes || '';
+  currentPromptId = prompt.id;
+  setPromptStatus(`Loaded: ${prompt.id}`);
+}
+
+async function runPrompt(promptId) {
+  const resp = await fetchJSON(`/api/prompts/${promptId}/run`, {
+    method: 'POST',
+  });
+  currentRunId = resp.run_id;
+  currentPromptId = promptId;
+  setStatus('Running...');
+  setSmoke(false);
   pollRun(currentRunId);
 }
 
@@ -403,6 +498,10 @@ rerunBtn.addEventListener('click', async () => {
       setStatus('No prior consensus to re-run.');
       return;
     }
+    if (latest.meta && latest.meta.prompt_id) {
+      await runPrompt(latest.meta.prompt_id);
+      return;
+    }
     const payload = { query: latest.query };
     if (latest.meta && latest.meta.input_path) {
       payload.input_path = latest.meta.input_path;
@@ -432,6 +531,30 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('query').value = '';
   document.getElementById('input-title').value = '';
   document.getElementById('input-notes').value = '';
+  currentPromptId = null;
+  setPromptStatus('Not saved');
 });
+
+if (savePromptBtn) {
+  savePromptBtn.addEventListener('click', () => {
+    savePrompt().catch((err) => console.error(err));
+  });
+}
+
+if (promptListEl) {
+  promptListEl.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const action = target.dataset.action;
+    const promptId = target.dataset.id;
+    if (!action || !promptId) return;
+    if (action === 'load') {
+      loadPrompt(promptId).catch((err) => console.error(err));
+    }
+    if (action === 'run') {
+      runPrompt(promptId).catch((err) => console.error(err));
+    }
+  });
+}
 
 refresh();
