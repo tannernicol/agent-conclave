@@ -46,6 +46,12 @@ def cmd_run(args: argparse.Namespace) -> None:
     pipeline = ConclavePipeline(config)
     result = pipeline.run(args.query, collections=args.collection)
     _print({"run_id": result.run_id, "consensus": result.consensus})
+    exit_code = int(config.quality.get("strict_exit_code", 0))
+    if args.no_fail_on_insufficient:
+        return
+    fail_on = args.fail_on_insufficient or (bool(config.quality.get("strict", False)) and exit_code)
+    if fail_on and result.consensus.get("insufficient_evidence"):
+        raise SystemExit(exit_code or 2)
 
 
 def cmd_runs(args: argparse.Namespace) -> None:
@@ -60,11 +66,21 @@ def cmd_runs(args: argparse.Namespace) -> None:
 def cmd_reconcile(args: argparse.Namespace) -> None:
     config = get_config()
     pipeline = ConclavePipeline(config)
+    exit_code = int(config.quality.get("strict_exit_code", 0))
+    def _should_fail(consensus: dict) -> bool:
+        if args.no_fail_on_insufficient:
+            return False
+        if args.fail_on_insufficient:
+            return True
+        return False
     if args.topic == "all":
         results = []
         for item in config.topics:
             result = pipeline.run(item.get("query", ""), collections=item.get("collections"), meta={"topic": item.get("id")})
             results.append({"topic": item.get("id"), "run_id": result.run_id, "consensus": result.consensus})
+            if _should_fail(result.consensus) and result.consensus.get("insufficient_evidence"):
+                _print({"results": results, "error": "insufficient_evidence"})
+                raise SystemExit(exit_code or 2)
         _print({"results": results})
         return
     topic = None
@@ -76,6 +92,8 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
         raise SystemExit(f"Unknown topic: {args.topic}")
     result = pipeline.run(topic.get("query", ""), collections=topic.get("collections"), meta={"topic": args.topic})
     _print({"run_id": result.run_id, "consensus": result.consensus})
+    if _should_fail(result.consensus) and result.consensus.get("insufficient_evidence"):
+        raise SystemExit(exit_code or 2)
 
 
 def cmd_index(args: argparse.Namespace) -> None:
@@ -149,6 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run")
     run.add_argument("--query", required=True)
     run.add_argument("--collection", action="append")
+    run.add_argument("--fail-on-insufficient", action="store_true")
+    run.add_argument("--no-fail-on-insufficient", action="store_true")
 
     runs = sub.add_parser("runs")
     runs_sub = runs.add_subparsers(dest="runs_cmd")
@@ -158,6 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     reconcile = sub.add_parser("reconcile")
     reconcile.add_argument("--topic", required=True)
+    reconcile.add_argument("--fail-on-insufficient", action="store_true")
+    reconcile.add_argument("--no-fail-on-insufficient", action="store_true")
 
     sub.add_parser("index")
 

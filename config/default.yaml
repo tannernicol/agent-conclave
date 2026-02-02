@@ -168,6 +168,21 @@ quality:
   high_evidence_min: 6
   pdf_ratio_limit: 0.7
   off_domain_ratio_limit: 0.5
+  strict_exit_code: 2
+  domain_paths:
+    bounty:
+      - /mnt/bounty/**
+      - /mnt/nas/Homelab/BugBounty/**
+      - /home/tanner/bounty-rag/**
+      - /home/tanner/security-library/**
+    health:
+      - /mnt/nas/Homelab/Health/**
+      - /home/tanner/health-data/**
+      - /home/tanner/health-rag/**
+    tax:
+      - /mnt/nas/Homelab/Tax/**
+      - /home/tanner/tax-data/**
+      - /home/tanner/tax-rag/**
 
 topics:
   - id: tax-checkup

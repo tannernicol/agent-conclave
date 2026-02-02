@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import time
 import logging
+import fnmatch
 
 from conclave.config import Config
 from conclave.models.registry import ModelRegistry
@@ -206,7 +207,13 @@ class ConclavePipeline:
         combined_files = file_results + nas_results
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
-        evidence, stats = self._select_evidence(rag_results, combined_files, preferred_collections=route.get("collections", []))
+        evidence, stats = self._select_evidence(
+            rag_results,
+            combined_files,
+            preferred_collections=route.get("collections", []),
+            domain=route.get("domain"),
+            domain_paths=self.config.quality.get("domain_paths", {}),
+        )
         rag_errors = self.rag.drain_errors()
         if rag_errors:
             stats["rag_errors"] = rag_errors
@@ -270,6 +277,7 @@ class ConclavePipeline:
             "confidence_auto": auto_conf,
             "pope": summary.strip().splitlines()[0] if summary.strip() else "",
             "fallback_used": fallback_used,
+            "insufficient_evidence": False,
         }
 
     def _call_model(self, model_id: Optional[str], prompt: str, role: Optional[str] = None) -> str:
@@ -428,6 +436,7 @@ class ConclavePipeline:
             "confidence_auto": "low",
             "pope": "### Insufficient Evidence for High-Fidelity Answer",
             "fallback_used": True,
+            "insufficient_evidence": True,
         }
 
     def _extract_disagreements(self, critic: str) -> list[str]:
@@ -450,7 +459,14 @@ class ConclavePipeline:
                     lines.append(numbered.sub("", stripped).strip())
         return lines
 
-    def _score_item(self, item: Dict[str, Any], source: str, preferred_collections: List[str] | None = None) -> Dict[str, Any]:
+    def _score_item(
+        self,
+        item: Dict[str, Any],
+        source: str,
+        preferred_collections: List[str] | None = None,
+        domain: str | None = None,
+        domain_paths: Dict[str, List[str]] | None = None,
+    ) -> Dict[str, Any]:
         path = item.get("path") or item.get("file_path") or item.get("name")
         title = item.get("title") or item.get("name") or (Path(path).name if path else "unknown")
         snippet = item.get("snippet") or item.get("match_line") or ""
@@ -471,10 +487,25 @@ class ConclavePipeline:
             signal -= 0.2
         if len(snippet.strip()) < 40:
             signal -= 0.2
+        on_domain = False
+        domain_known = False
         if preferred_collections:
-            if collection and collection in preferred_collections:
+            if collection:
+                domain_known = True
+                if collection in preferred_collections:
+                    on_domain = True
+        if domain and domain_paths and path:
+            patterns = domain_paths.get(domain, [])
+            if patterns:
+                domain_known = True
+                for pattern in patterns:
+                    if fnmatch.fnmatch(path, pattern):
+                        on_domain = True
+                        break
+        if preferred_collections and domain_known:
+            if on_domain:
                 signal += 0.2
-            elif collection:
+            else:
                 signal -= 0.2
         mtime = None
         if path:
@@ -501,6 +532,7 @@ class ConclavePipeline:
             "extension": ext,
             "signal_score": round(signal, 3),
             "mtime": mtime,
+            "on_domain": on_domain if domain_known else None,
         }
 
     def _select_evidence(
@@ -509,9 +541,13 @@ class ConclavePipeline:
         nas: List[Dict[str, Any]],
         limit: int = 12,
         preferred_collections: List[str] | None = None,
+        domain: str | None = None,
+        domain_paths: Dict[str, List[str]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        items = [self._score_item(item, "rag", preferred_collections) for item in rag] + [
-            self._score_item(item, "nas", preferred_collections) for item in nas
+        items = [
+            self._score_item(item, "rag", preferred_collections, domain, domain_paths) for item in rag
+        ] + [
+            self._score_item(item, "nas", preferred_collections, domain, domain_paths) for item in nas
         ]
         items.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
         selected: List[Dict[str, Any]] = []
@@ -526,18 +562,26 @@ class ConclavePipeline:
                 break
         pdf_count = sum(1 for item in selected if item.get("extension") == ".pdf")
         off_domain = 0
-        if preferred_collections:
-            for item in selected:
-                collection = item.get("collection")
-                if collection and collection not in preferred_collections:
-                    off_domain += 1
+        on_domain = 0
+        domain_known = 0
+        for item in selected:
+            if item.get("on_domain") is None:
+                continue
+            domain_known += 1
+            if item.get("on_domain"):
+                on_domain += 1
+            else:
+                off_domain += 1
         stats = {
             "evidence_count": len(selected),
             "total_candidates": len(items),
             "pdf_ratio": (pdf_count / len(selected)) if selected else 0.0,
             "max_signal_score": max([item.get("signal_score", 0) for item in selected], default=0),
             "avg_signal_score": round(sum(item.get("signal_score", 0) for item in selected) / len(selected), 3) if selected else 0.0,
-            "off_domain_ratio": (off_domain / len(selected)) if selected else 0.0,
+            "off_domain_ratio": (off_domain / domain_known) if domain_known else 0.0,
+            "domain_known": domain_known,
+            "on_domain": on_domain,
+            "off_domain": off_domain,
         }
         return selected, stats
 
@@ -552,6 +596,7 @@ class ConclavePipeline:
         avg_signal = float(stats.get("avg_signal_score", 0))
         pdf_ratio = float(stats.get("pdf_ratio", 0))
         off_domain_ratio = float(stats.get("off_domain_ratio", 0))
+        domain_known = int(stats.get("domain_known", 0))
         issues = []
         if evidence_count < min_evidence:
             issues.append("insufficient_evidence")
@@ -559,7 +604,7 @@ class ConclavePipeline:
             issues.append("low_signal")
         if pdf_ratio > pdf_ratio_limit:
             issues.append("pdf_heavy")
-        if off_domain_ratio > off_domain_limit:
+        if domain_known and off_domain_ratio > off_domain_limit:
             issues.append("off_domain")
         if stats.get("rag_errors"):
             issues.append("rag_errors")

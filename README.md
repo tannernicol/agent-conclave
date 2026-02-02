@@ -33,6 +33,7 @@ python -m conclave.cli runs latest
 python -m conclave.cli reconcile --topic tax-checkup
 python -m conclave.cli schedule list
 python -m conclave.cli schedule apply --enable
+python -m conclave.cli run --query "..." --fail-on-insufficient
 ```
 
 ## Configuration
@@ -70,6 +71,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - MCP servers are detected from `~/.mcp.json` and logged into the audit trail.
 - RAG collections are discovered from `rag.tannner.com` and expanded by domain patterns.
 - High-fidelity mode is enforced via `quality.strict`; insufficient evidence returns a "needs more data" response.
+- Use `--fail-on-insufficient` (or `quality.strict_exit_code`) to make CLI runs fail on low evidence.
 
 ## Tests (smoke + planner)
 
