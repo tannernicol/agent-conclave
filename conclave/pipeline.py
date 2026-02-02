@@ -832,9 +832,17 @@ class ConclavePipeline:
 
     def _insufficient_evidence_answer(self, query: str, quality: Dict[str, Any], note: str | None = None) -> Dict[str, Any]:
         details = []
-        details.append(f"- Evidence count: {quality.get('evidence_count', 0)} (min {self.config.quality.get('min_evidence', 2)})")
+        min_evidence = int(self.config.quality.get("min_evidence", 2))
+        details.append(f"- Evidence count: {quality.get('evidence_count', 0)} (min {min_evidence})")
         details.append(f"- Max signal score: {quality.get('max_signal_score', 0):.2f}")
         details.append(f"- PDF ratio: {quality.get('pdf_ratio', 0):.2f}")
+        issues = quality.get("issues", []) or []
+        if issues:
+            details.append(f"- Issues: {', '.join(issues)}")
+        required_count = quality.get("required_collection_count")
+        required_hits = quality.get("required_collection_hits")
+        if required_count:
+            details.append(f"- Required collection hits: {required_hits or 0}/{required_count}")
         if quality.get("rag_errors"):
             details.append(f"- Retrieval errors: {len(quality.get('rag_errors', []))} (rag.tannner.com)")
         if quality.get("source_errors"):
@@ -1212,6 +1220,8 @@ class ConclavePipeline:
             "avg_signal_score": avg_signal,
             "pdf_ratio": pdf_ratio,
             "off_domain_ratio": off_domain_ratio,
+            "required_collection_hits": stats.get("required_collection_hits", 0),
+            "required_collection_count": stats.get("required_collection_count", 0),
             "rag_errors": stats.get("rag_errors", []),
             "source_errors": stats.get("source_errors", []),
             "issues": issues,
