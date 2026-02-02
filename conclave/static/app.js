@@ -25,6 +25,7 @@ const copyLatestBtn = document.getElementById('copy-latest');
 const promptExamplesEl = document.getElementById('prompt-examples');
 const collectionPickerEl = document.getElementById('input-collections');
 const toggleEvidenceBtn = document.getElementById('toggle-evidence');
+const outputTypeEl = document.getElementById('output-type');
 
 let currentRunId = null;
 let pollTimer = null;
@@ -444,7 +445,10 @@ function renderLatest(latest) {
 
   if (latestPromptEl) {
     const prompt = latest.query || '';
-    latestPromptEl.textContent = prompt ? `"${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"` : '';
+    const outputType = latest.meta?.output_type || '';
+    const promptText = prompt ? `"${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"` : '';
+    const outputHtml = outputType ? `<span class="latest-output">Output: ${escapeHtml(outputType)}</span>` : '';
+    latestPromptEl.innerHTML = `${escapeHtml(promptText)} ${outputHtml}`.trim();
   }
 
   // Render models used
@@ -516,6 +520,7 @@ function renderRuns(runs) {
     const status = run.status || 'unknown';
     const isInsufficient = isInsufficientEvidence(run.consensus);
     const hasError = status === 'failed' || isInsufficient;
+    const outputType = run.meta?.output_type || '';
 
     let statusChip = '';
     if (status === 'running') {
@@ -527,6 +532,7 @@ function renderRuns(runs) {
     } else if (status === 'complete') {
       statusChip = '<span class="status-chip complete">Complete</span>';
     }
+    const outputChip = outputType ? `<span class="status-chip output">Output: ${escapeHtml(outputType)}</span>` : '';
 
     let outputHtml = '';
     if (run.consensus?.answer) {
@@ -543,11 +549,12 @@ function renderRuns(runs) {
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
 
     return `
-      <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}">
+      <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}" data-run-output="${escapeHtml(outputType)}">
         <div class="run-card-main">
           <div class="run-card-title">
             ${escapeHtml(title.slice(0, 60))}${title.length > 60 ? '...' : ''}
             ${statusChip}
+            ${outputChip}
           </div>
           <div class="run-card-query">${escapeHtml(run.query || '')}</div>
           ${outputHtml}
@@ -574,6 +581,7 @@ function renderRuns(runs) {
 function renderRunDetail(run) {
   const events = run.events || [];
   const lastEvents = events.slice(-6);
+  const outputType = run.meta?.output_type;
 
   const logItems = lastEvents.map((event) => {
     const time = event.timestamp ? formatTimeShort(event.timestamp) : '';
@@ -595,7 +603,16 @@ function renderRunDetail(run) {
     return `<li>${escapeHtml(name)} <span class="ui-muted">[${score}]</span></li>`;
   }).join('');
 
+  const metaItems = [];
+  if (outputType) metaItems.push(`<li>Output: ${escapeHtml(outputType)}</li>`);
+
   return `
+    ${metaItems.length ? `
+    <div class="log-section">
+      <div class="log-section-title">Run Meta</div>
+      <ul class="log-list">${metaItems.join('')}</ul>
+    </div>
+    ` : ''}
     <div class="log-section">
       <div class="log-section-title">Pipeline Log</div>
       <ul class="log-list">${logItems || '<li>No events</li>'}</ul>
@@ -624,10 +641,11 @@ function renderPromptList(prompts) {
 
   promptListEl.innerHTML = prompts.map((prompt) => {
     const title = prompt.title || prompt.query?.slice(0, 40) || prompt.id;
+    const outputType = prompt.output_type ? ` • Output: ${prompt.output_type}` : '';
     return `
       <div class="prompt-card">
         <div class="prompt-card-title">${escapeHtml(title)}</div>
-        <div class="prompt-card-meta">Updated ${formatTime(prompt.updated_at)}</div>
+        <div class="prompt-card-meta">Updated ${formatTime(prompt.updated_at)}${escapeHtml(outputType)}</div>
         <div class="prompt-card-query">${escapeHtml(prompt.query || '')}</div>
         <div class="prompt-card-actions">
           <button class="ui-button small" data-action="load" data-id="${prompt.id}">Load</button>
@@ -725,7 +743,12 @@ async function startRun(query) {
   setStatus('Running...', 'running');
   setSmoke(false);
   renderProgress({ status: 'running', events: [] });
-  setRunAction('Running new decision', `Source: prompt editor • ${summarizeQuery(query)}`, 'running');
+  const outputType = outputTypeEl?.value || '';
+  setRunAction(
+    'Running new decision',
+    `Source: prompt editor • ${summarizeQuery(query)}${outputType ? ' • Output: ' + outputType : ''}`,
+    'running'
+  );
 
   const inputTitle = document.getElementById('input-title').value.trim();
   const inputNotes = document.getElementById('input-notes').value.trim();
@@ -745,7 +768,13 @@ async function startRun(query) {
     const inputResp = await fetchJSON('/api/inputs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: inputTitle, content: inputNotes, question: query, artifacts: inputArtifacts }),
+      body: JSON.stringify({
+        title: inputTitle,
+        content: inputNotes,
+        question: query,
+        artifacts: inputArtifacts,
+        output_type: outputType,
+      }),
     });
     inputId = inputResp.input_id;
   }
@@ -755,6 +784,7 @@ async function startRun(query) {
   if (inputTitle) payload.input_title = inputTitle;
   if (currentPromptId) payload.prompt_id = currentPromptId;
   if (selectedCollections.length) payload.collections = selectedCollections;
+  if (outputType) payload.output_type = outputType;
 
   const resp = await fetchJSON('/api/run', {
     method: 'POST',
@@ -801,13 +831,17 @@ async function savePrompt() {
   const query = document.getElementById('query').value.trim();
   const title = document.getElementById('input-title').value.trim();
   const notes = document.getElementById('input-notes').value.trim();
+  const artifacts = document.getElementById('input-artifacts').value
+    .split('\n').map(l => l.trim()).filter(Boolean);
+  const outputType = outputTypeEl?.value || '';
 
   if (!query) {
     setPromptStatus('Enter a question first');
     return;
   }
 
-  const payload = { title, query, notes };
+  const payload = { title, query, notes, artifacts };
+  if (outputType) payload.output_type = outputType;
   let resp;
 
   if (currentPromptId) {
@@ -835,6 +869,8 @@ async function loadPrompt(promptId) {
   document.getElementById('query').value = prompt.query || '';
   document.getElementById('input-title').value = prompt.title || '';
   document.getElementById('input-notes').value = prompt.notes || '';
+  document.getElementById('input-artifacts').value = (prompt.artifacts || []).join('\n');
+  if (outputTypeEl) outputTypeEl.value = prompt.output_type || '';
   currentPromptId = prompt.id;
   setPromptStatus('Loaded');
   updatePromptButton();
@@ -859,6 +895,7 @@ async function loadRunForEdit(run) {
   }
   document.getElementById('query').value = run.query || '';
   document.getElementById('input-title').value = run.meta?.input_title || '';
+  if (outputTypeEl) outputTypeEl.value = run.meta?.output_type || '';
   currentPromptId = null;
   setPromptStatus('Loaded from run');
   updatePromptButton();
@@ -879,7 +916,12 @@ rerunBtn.addEventListener('click', async () => {
       return;
     }
     const latestLabel = latest.meta?.input_title || latest.query || latest.id;
-    setRunAction('Re-running latest decision', `Source: ${summarizeQuery(latestLabel)} • Output will appear in Latest Decision.`, 'running');
+    const latestOutput = latest.meta?.output_type;
+    setRunAction(
+      'Re-running latest decision',
+      `Source: ${summarizeQuery(latestLabel)}${latestOutput ? ' • Output: ' + latestOutput : ''} • Output will appear in Latest Decision.`,
+      'running'
+    );
     if (latest.meta?.prompt_id) {
       await runPrompt(latest.meta.prompt_id);
       return;
@@ -906,6 +948,7 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('input-title').value = '';
   document.getElementById('input-notes').value = '';
   document.getElementById('input-artifacts').value = '';
+  if (outputTypeEl) outputTypeEl.value = '';
   currentPromptId = null;
   setPromptStatus('Ready');
   updatePromptButton();
@@ -980,7 +1023,12 @@ if (runListEl) {
     if (e.target.classList.contains('rerun-run')) {
       const card = e.target.closest('.run-card');
       const label = card?.dataset?.runTitle || card?.dataset?.runQuery || runId;
-      setRunAction('Re-running from history', `Source: ${summarizeQuery(label)} • Output will appear in Latest Decision.`, 'running');
+      const outputType = card?.dataset?.runOutput || '';
+      setRunAction(
+        'Re-running from history',
+        `Source: ${summarizeQuery(label)}${outputType ? ' • Output: ' + outputType : ''} • Output will appear in Latest Decision.`,
+        'running'
+      );
       setStatus('Running...', 'running');
       setSmoke(false);
       const resp = await fetchJSON(`/api/runs/${runId}/rerun`, { method: 'POST' });

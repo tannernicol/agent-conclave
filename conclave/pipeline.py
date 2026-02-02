@@ -114,6 +114,8 @@ class ConclavePipeline:
                 "nas_samples": context["nas"][:3],
                 "source_samples": context.get("sources", [])[:2],
             })
+            if meta and meta.get("output_type"):
+                context["output_type"] = str(meta.get("output_type"))
             quality = self._evaluate_quality(context)
             audit.log("quality.check", quality)
             self.store.append_event(run_id, {"phase": "quality", **quality})
@@ -636,6 +638,7 @@ class ConclavePipeline:
         instructions = self._user_instructions(context)
         domain = route.get("domain")
         domain_instructions = ""
+        output_instructions = self._output_instructions(context.get("output_type"))
         if domain == "bounty":
             domain_instructions = (
                 "For bounty analysis, only propose findings that are supported by evidence snippets.\n"
@@ -676,8 +679,10 @@ class ConclavePipeline:
                     f"Previous draft:\n{reasoner_out}\n\n"
                     f"Critic feedback:\n{critic_out}\n"
                 )
-            if domain_instructions or instructions:
+            if domain_instructions or instructions or output_instructions:
                 analysis_prompt += f"\n{domain_instructions}\n"
+                if output_instructions:
+                    analysis_prompt += f"\n{output_instructions}\n"
                 if instructions:
                     analysis_prompt += f"Instructions from input:\n{instructions}\n"
             reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner")
@@ -688,8 +693,10 @@ class ConclavePipeline:
                 "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
                 f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
             )
-            if domain_instructions or instructions:
+            if domain_instructions or instructions or output_instructions:
                 critic_prompt += f"\n{domain_instructions}\n"
+                if output_instructions:
+                    critic_prompt += f"\n{output_instructions}\n"
                 if instructions:
                     critic_prompt += f"Instructions from input:\n{instructions}\n"
             critic_out = self._call_model(critic_model, critic_prompt, role="critic")
@@ -730,6 +737,7 @@ class ConclavePipeline:
         context_blob = self._format_context(context)
         instructions = self._user_instructions(context)
         domain = route.get("domain")
+        output_instructions = self._output_instructions(context.get("output_type"))
         evidence_hint = (
             f"Evidence count: {quality.get('evidence_count', 0)}, "
             f"pdf_ratio: {quality.get('pdf_ratio', 0):.2f}, "
@@ -758,6 +766,7 @@ class ConclavePipeline:
             f"Question: {query}\n\nContext:\n{context_blob}\n\n"
             f"Evidence quality: {evidence_hint}\n\n"
             f"{domain_instructions}\n"
+            f"{output_instructions}\n"
             f"{'Instructions from input:\\n' + instructions + '\\n' if instructions else ''}"
             f"Reasoner notes:\n{deliberation.get('reasoner', '')}\n\n"
             f"Critic notes:\n{deliberation.get('critic', '')}\n"
@@ -927,6 +936,89 @@ class ConclavePipeline:
         if self._context_char_limit:
             return blob[: self._context_char_limit]
         return blob
+
+    def _output_instructions(self, output_type: Optional[str]) -> str:
+        if not output_type:
+            return ""
+        key = str(output_type).strip().lower()
+        aliases = {
+            "image": "image_brief",
+            "image_prompt": "image_brief",
+            "visual": "image_brief",
+            "3d": "model_3d_brief",
+            "3d_model": "model_3d_brief",
+            "model": "model_3d_brief",
+            "build": "build_spec",
+            "spec": "build_spec",
+            "tool": "build_spec",
+            "decision": "decision",
+            "report": "report",
+            "checklist": "checklist",
+            "plan": "plan",
+        }
+        key = aliases.get(key, key)
+        if key == "image_brief":
+            return (
+                "Output type: IMAGE BRIEF.\n"
+                "Return:\n"
+                "- Image prompt (single paragraph)\n"
+                "- Negative prompt\n"
+                "- Composition & camera\n"
+                "- Lighting\n"
+                "- Palette\n"
+                "- Aspect ratio & resolution\n"
+                "- 2 variant ideas\n"
+            )
+        if key == "model_3d_brief":
+            return (
+                "Output type: 3D MODEL SPEC.\n"
+                "Return:\n"
+                "- Target format (GLB/FBX)\n"
+                "- Units & scale\n"
+                "- Dimensions (approx)\n"
+                "- Parts list / hierarchy\n"
+                "- Materials/shaders\n"
+                "- Deliverable file structure\n"
+            )
+        if key == "build_spec":
+            return (
+                "Output type: BUILD SPEC.\n"
+                "Return:\n"
+                "- Objective\n"
+                "- Functional requirements\n"
+                "- Non-functional requirements\n"
+                "- Interfaces / APIs\n"
+                "- Data model\n"
+                "- Acceptance criteria\n"
+                "- Milestones\n"
+            )
+        if key == "decision":
+            return (
+                "Output type: DECISION.\n"
+                "Return:\n"
+                "- Decision\n"
+                "- Rationale\n"
+                "- Risks\n"
+                "- Next steps\n"
+            )
+        if key == "checklist":
+            return (
+                "Output type: CHECKLIST.\n"
+                "Return a checklist using '- [ ]' items grouped by phase.\n"
+            )
+        if key == "plan":
+            return (
+                "Output type: PLAN.\n"
+                "Return:\n"
+                "- Goals\n"
+                "- Phases with deliverables\n"
+                "- Dependencies\n"
+                "- Risks\n"
+            )
+        return (
+            "Output type: REPORT.\n"
+            "Return a concise report with Summary, Recommendations, Risks, and Follow-ups.\n"
+        )
 
     def _extract_confidence(self, summary: str) -> str:
         lower = summary.lower()

@@ -46,6 +46,18 @@
             <div class="form-advanced-body">
               <label for="input-title">Title</label>
               <input id="input-title" name="input-title" type="text" placeholder="Optional title for this decision" />
+              <label for="output-type">Output Type</label>
+              <select id="output-type" name="output-type" class="collection-picker">
+                <option value="">Auto (report)</option>
+                <option value="report">Report</option>
+                <option value="decision">Decision</option>
+                <option value="plan">Plan</option>
+                <option value="checklist">Checklist</option>
+                <option value="build_spec">Build spec</option>
+                <option value="image_brief">Image brief</option>
+                <option value="model_3d_brief">3D model brief</option>
+              </select>
+              <div class="collection-hint ui-muted">Pick the deliverable you want from Conclave.</div>
               <label for="input-collections">Collections</label>
               <select id="input-collections" name="input-collections" multiple class="collection-picker">
                 <option value="">Auto-detect domain</option>

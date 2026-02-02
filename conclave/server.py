@@ -49,7 +49,14 @@ def _prompt_path(config, prompt_id: str) -> Path:
 def _prompt_input_path(config, prompt_id: str) -> Path:
     return _inputs_dir(config) / f"prompt-{prompt_id}.md"
 
-def _write_prompt_input(path: Path, title: str, question: str, notes: str, artifacts: list[str] | None = None) -> None:
+def _write_prompt_input(
+    path: Path,
+    title: str,
+    question: str,
+    notes: str,
+    artifacts: list[str] | None = None,
+    output_type: str | None = None,
+) -> None:
     body = []
     if title:
         body.append(f"# {title}")
@@ -57,6 +64,10 @@ def _write_prompt_input(path: Path, title: str, question: str, notes: str, artif
     if question:
         body.append("## Question")
         body.append(question)
+        body.append("")
+    if output_type:
+        body.append("## Output Type")
+        body.append(output_type)
         body.append("")
     body.append("## Notes")
     body.append(notes or "")
@@ -96,6 +107,31 @@ async def models_api(request: Request):
     return {"models": request.app.state.registry.list_models()}
 
 
+@app.get("/api/collections")
+async def collections_api(request: Request):
+    """Get available RAG collections for the picker."""
+    config = request.app.state.config
+    pipeline = request.app.state.pipeline
+
+    # Get collections from RAG
+    collections = pipeline.rag.collections()
+
+    # Add reliability info from config
+    reliability_map = config.rag.get("collection_reliability", {})
+    result = []
+    for coll in collections:
+        name = coll.get("name", "")
+        result.append({
+            "name": name,
+            "file_count": coll.get("file_count", 0),
+            "exists": coll.get("exists", True),
+            "reliability": reliability_map.get(name, "other"),
+            "description": coll.get("description", ""),
+        })
+
+    return {"collections": result}
+
+
 @app.post("/api/run")
 async def run_api(payload: dict, background: BackgroundTasks, request: Request):
     query = payload.get("query", "").strip()
@@ -106,6 +142,9 @@ async def run_api(payload: dict, background: BackgroundTasks, request: Request):
     input_title = (payload.get("input_title") or "").strip()
     if input_title:
         meta["input_title"] = input_title
+    output_type = (payload.get("output_type") or "").strip()
+    if output_type:
+        meta["output_type"] = output_type
     prompt_id = (payload.get("prompt_id") or "").strip()
     if prompt_id:
         meta["prompt_id"] = prompt_id
@@ -211,6 +250,7 @@ async def inputs_api(payload: dict, request: Request):
         return JSONResponse({"error": "content required"}, status_code=400)
     title = (payload.get("title") or "").strip()
     question = (payload.get("question") or "").strip()
+    output_type = (payload.get("output_type") or "").strip()
     artifacts = payload.get("artifacts") or []
     artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
     slug = _slugify(title or question or "input")
@@ -225,6 +265,10 @@ async def inputs_api(payload: dict, request: Request):
     if question:
         body.append("## Question")
         body.append(question)
+        body.append("")
+    if output_type:
+        body.append("## Output Type")
+        body.append(output_type)
         body.append("")
     body.append("## Notes")
     body.append(content)
@@ -265,6 +309,7 @@ async def prompts_create_api(payload: dict, request: Request):
     title = (payload.get("title") or "").strip()
     query = (payload.get("query") or "").strip()
     notes = (payload.get("notes") or "").strip()
+    output_type = (payload.get("output_type") or "").strip()
     artifacts = payload.get("artifacts") or []
     artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
     if not query:
@@ -286,8 +331,9 @@ async def prompts_create_api(payload: dict, request: Request):
         "updated_at": created_at,
         "input_path": str(_prompt_input_path(config, prompt_id)),
         "last_run_id": None,
+        "output_type": output_type or None,
     }
-    _write_prompt_input(Path(prompt["input_path"]), title, query, notes, artifacts)
+    _write_prompt_input(Path(prompt["input_path"]), title, query, notes, artifacts, output_type=output_type)
     path.write_text(json.dumps(prompt, indent=2))
     return {"ok": True, "prompt": prompt}
 
@@ -302,6 +348,7 @@ async def prompts_update_api(prompt_id: str, payload: dict, request: Request):
     title = (payload.get("title") or prompt.get("title") or "").strip()
     query = (payload.get("query") or prompt.get("query") or "").strip()
     notes = (payload.get("notes") or prompt.get("notes") or "").strip()
+    output_type = (payload.get("output_type") or prompt.get("output_type") or "").strip()
     artifacts = payload.get("artifacts")
     if artifacts is None:
         artifacts = prompt.get("artifacts") or []
@@ -310,10 +357,11 @@ async def prompts_update_api(prompt_id: str, payload: dict, request: Request):
     prompt["query"] = query
     prompt["notes"] = notes
     prompt["artifacts"] = artifacts
+    prompt["output_type"] = output_type or None
     prompt["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     input_path = Path(prompt.get("input_path") or _prompt_input_path(config, prompt_id))
     prompt["input_path"] = str(input_path)
-    _write_prompt_input(input_path, title, query, notes, artifacts)
+    _write_prompt_input(input_path, title, query, notes, artifacts, output_type=output_type)
     path.write_text(json.dumps(prompt, indent=2))
     return {"ok": True, "prompt": prompt}
 
@@ -391,6 +439,8 @@ async def prompts_run_api(prompt_id: str, background: BackgroundTasks, request: 
         "input_title": prompt.get("title") or prompt_id,
         "input_path": prompt.get("input_path"),
     }
+    if prompt.get("output_type"):
+        meta["output_type"] = prompt.get("output_type")
     run_id = request.app.state.store.create_run(query, meta=meta)
     def _task():
         request.app.state.pipeline.run(query, collections=None, run_id=run_id, meta=meta)

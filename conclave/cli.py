@@ -40,6 +40,9 @@ def _build_meta(args: argparse.Namespace, input_path: str | None = None) -> dict
     if path:
         meta["input_path"] = path
     meta["source"] = "cli"
+    output_type = getattr(args, "output_type", None)
+    if output_type:
+        meta["output_type"] = output_type
     if getattr(args, "max_evidence", None):
         meta["evidence_limit"] = args.max_evidence
     if getattr(args, "max_context_chars", None):
@@ -281,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--collection", action="append")
     run.add_argument("--input-file")
     run.add_argument("--output-md")
+    run.add_argument("--output-type", help="report|decision|plan|checklist|build_spec|image_brief|model_3d_brief")
     run.add_argument("--progress", action="store_true")
     run.add_argument("--max-seconds", type=int)
     run.add_argument("--max-evidence", type=int)
