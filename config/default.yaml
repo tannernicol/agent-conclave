@@ -284,6 +284,19 @@ quality:
   min_content_evidence: 1
   min_non_user_evidence: 1
   min_required_collection_hits: 0
+  domain_overrides:
+    general:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      min_content_evidence: 0
+      min_strong_evidence: 0
+      allow_user_only: true
+    agriculture:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      min_content_evidence: 0
+      min_strong_evidence: 0
+      allow_user_only: true
   pdf_ratio_limit: 0.7
   off_domain_ratio_limit: 0.5
   strict_exit_code: 2

@@ -1062,15 +1062,16 @@ class ConclavePipeline:
         source_items: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         items = []
+        user_input_present = False
         for item in rag:
             items.append(self._score_item(item, "rag", preferred_collections, domain, domain_paths, collection_reliability))
         for item in nas:
             enriched = self._maybe_attach_line(item)
             items.append(self._score_item(enriched, "nas", preferred_collections, domain, domain_paths, collection_reliability))
         if user_items:
-            items.extend([
-                self._score_item(item, "user", preferred_collections, domain, domain_paths, collection_reliability) for item in user_items
-            ])
+            for item in user_items:
+                user_input_present = True
+                items.append(self._score_item(item, "user", preferred_collections, domain, domain_paths, collection_reliability))
         if source_items:
             items.extend([
                 self._score_item(item, "source", preferred_collections, domain, domain_paths, collection_reliability) for item in source_items
@@ -1133,6 +1134,8 @@ class ConclavePipeline:
             "non_user_evidence_count": non_user_count,
             "required_collection_hits": required_hits,
             "required_collection_count": len(required_set),
+            "user_input_present": user_input_present,
+            "domain": domain or "general",
         }
         return selected, stats
 
@@ -1194,10 +1197,20 @@ class ConclavePipeline:
         non_user_count = int(stats.get("non_user_evidence_count", 0))
         required_hits = int(stats.get("required_collection_hits", 0))
         required_count = int(stats.get("required_collection_count", 0))
+        domain = stats.get("domain") or "general"
+        user_input_present = bool(stats.get("user_input_present"))
+        overrides = (self.config.quality.get("domain_overrides", {}) or {}).get(domain, {})
+        if overrides:
+            min_evidence = int(overrides.get("min_evidence", min_evidence))
+            min_strong = int(overrides.get("min_strong_evidence", min_strong))
+            min_content = int(overrides.get("min_content_evidence", min_content))
+            min_non_user = int(overrides.get("min_non_user_evidence", min_non_user))
+            min_required = int(overrides.get("min_required_collection_hits", min_required))
+        allow_user_only = bool(overrides.get("allow_user_only", False)) if overrides else False
         issues = []
         if evidence_count < min_evidence:
             issues.append("insufficient_evidence")
-        if max_signal < low_signal_threshold:
+        if max_signal < low_signal_threshold and not (allow_user_only and user_input_present):
             issues.append("low_signal")
         if strong_count < min_strong or content_count < min_content or non_user_count < min_non_user:
             issues.append("low_relevance")
