@@ -52,7 +52,7 @@ class ConclavePipeline:
             max_file_mb=int(config.index.get("max_file_mb", 2)),
         )
         self.store = DecisionStore(config.data_dir)
-        self.mcp = MCPBridge()
+        self.mcp = MCPBridge(config_path=config.mcp_config_path)
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
         self._context_char_limit: int | None = None
@@ -117,7 +117,9 @@ class ConclavePipeline:
             quality = self._evaluate_quality(context)
             audit.log("quality.check", quality)
             self.store.append_event(run_id, {"phase": "quality", **quality})
-            if quality.get("insufficient") and bool(self.config.quality.get("strict", True)):
+            issues = quality.get("issues", [])
+            fail_on_rag_errors = bool(self.config.quality.get("fail_on_rag_errors", False))
+            if (quality.get("insufficient") or (fail_on_rag_errors and "rag_errors" in issues)) and bool(self.config.quality.get("strict", True)):
                 consensus = self._insufficient_evidence_answer(query, quality)
                 artifacts = {
                     "route": route,
@@ -290,10 +292,27 @@ class ConclavePipeline:
             domain = "money"
         if any(word in q for word in ["farm", "farmland", "orchard", "agriculture", "acreage", "ranch", "livestock", "soil"]):
             domain = "agriculture"
+        security_keywords = [
+            "ssrf", "xss", "sqli", "sql injection", "rce", "csrf", "idor", "cve", "payload",
+            "pwn", "bypass", "injection", "auth", "oauth", "sso", "saml", "jwt", "directory traversal",
+            "path traversal", "xxe", "deserialization", "prototype pollution", "command injection",
+        ]
+        bounty_keywords = [
+            "bounty", "bug bounty", "immunefi", "hunt", "target", "report", "finding",
+            "payout", "severity", "proof of concept", "poc", "triage",
+        ]
         if any(word in q for word in tax_keywords):
             needs_tax = True
-        if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi", "ssrf", "xss", "sqli", "sql injection", "rce", "csrf", "idor", "cve", "payload", "pwn", "bypass", "injection"]):
+        target_hints = [
+            "target", "codebase", "audit", "review findings", "finding", "report", "poc",
+            "scope", "triage", "contract", "solidity", "smart contract", "exploit",
+            "submission", "handoff", "hunt", "program",
+        ]
+        has_target_context = any(word in q for word in target_hints) or ("/" in q and "." in q)
+        if any(word in q for word in bounty_keywords + ["vuln", "exploit", "smart contract"]) and has_target_context:
             domain = "bounty"
+        elif any(word in q for word in security_keywords):
+            domain = "security"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
         required_collections: List[str] = []
         if needs_tax:

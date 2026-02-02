@@ -206,6 +206,7 @@ rag:
     tax: [tax-rag, tax-data, homelab-rag]
     health: [health-rag, health-data, homelab-rag]
     bounty: [bounty-rag, bugbounty-rag, security-library]
+    security: [security-library, web-security]
     money: [homelab-rag, prompts]
     agriculture: [survival-library, notes]
   dynamic_patterns:
@@ -280,6 +281,7 @@ deliberation:
 
 quality:
   strict: true
+  fail_on_rag_errors: false
   min_evidence: 2
   low_signal_threshold: 0.5
   high_signal_threshold: 1.0
@@ -290,6 +292,12 @@ quality:
   min_required_collection_hits: 0
   domain_overrides:
     general:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      min_content_evidence: 0
+      min_strong_evidence: 0
+      allow_user_only: true
+    security:
       min_evidence: 1
       min_non_user_evidence: 0
       min_content_evidence: 0
@@ -311,6 +319,8 @@ quality:
       - /home/tanner/bounty-rag/**
       - /home/tanner/security-library/**
       - /home/tanner/bug-bounty-recon/targets/**
+    security:
+      - /home/tanner/security-library/**
     health:
       - /mnt/nas/Homelab/Health/**
       - /home/tanner/health-data/**
