@@ -374,8 +374,11 @@ function renderLogs(run) {
   const outputBody = outputText ? renderMarkdown(outputText) : '<div class="empty-state">No output.</div>';
   const evidenceBody = renderEvidence(run);
   const modelFooter = renderModelFooter(run);
+  const errors = (run?.artifacts?.quality?.issues || []).filter((item) => item === 'rag_errors' || item === 'source_errors');
+  const errorBadge = errors.length ? `<div class="ui-chip run-chip">retrieval issues</div>` : '';
   return `
     <ul class="log-list">${preview}</ul>
+    ${errorBadge}
     <details class="log-detail">
       <summary>View full log + output</summary>
       <div class="log-detail-body">

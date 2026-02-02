@@ -249,7 +249,7 @@ class ConclavePipeline:
             domain = "agriculture"
         if any(word in q for word in tax_keywords):
             needs_tax = True
-        if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi", "ssrf", "xss", "sqli", "sql injection", "rce", "csrf", "idor", "cve", "payload", "pwn"]):
+        if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi", "ssrf", "xss", "sqli", "sql injection", "rce", "csrf", "idor", "cve", "payload", "pwn", "bypass", "injection"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
         required_collections: List[str] = []

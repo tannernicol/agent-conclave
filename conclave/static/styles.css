@@ -365,6 +365,10 @@ textarea {
   display: inline-block;
 }
 
+.log-detail .run-chip {
+  margin-top: 8px;
+}
+
 .run-id {
   margin-top: 6px;
   font-size: 11px;

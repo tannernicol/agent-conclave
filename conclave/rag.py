@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 class RagClient:
     base_url: str
     errors: list[dict] | None = None
+    _collections_cache: list[dict] | None = None
 
     def __post_init__(self) -> None:
         if self.errors is None:
             self.errors = []
+        if self._collections_cache is None:
+            self._collections_cache = []
 
     def _record_error(self, action: str, exc: Exception) -> None:
         if self.errors is None:
@@ -57,11 +60,13 @@ class RagClient:
             with httpx.Client(timeout=5.0) as client:
                 resp = client.get(f"{self.base_url}/api/rag/collections")
                 resp.raise_for_status()
-                return resp.json().get("collections", [])
+                collections = resp.json().get("collections", [])
+                self._collections_cache = collections
+                return collections
         except Exception as exc:
             self._record_error("collections", exc)
             logger.warning("RAG collections fetch failed", exc_info=True)
-            return []
+            return self._collections_cache or []
 
     def search_files(self, query: str, limit: int = 20, extension: Optional[str] = None) -> list[dict]:
         params = {"q": query, "limit": limit}
