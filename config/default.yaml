@@ -87,6 +87,8 @@ models:
         - --print
         - --output-format
         - text
+        - --model
+        - opus
         - --no-session-persistence
       prompt_mode: arg
       timeout_seconds: 120
@@ -114,15 +116,14 @@ models:
     - id: cli:codex
       provider: cli
       kind: external
-      model_label: gpt-oss:20b
+      model_label: gpt-5.2-codex
       command:
         - /usr/local/bin/codex
         - exec
         - --sandbox
         - read-only
-        - --oss
-        - --local-provider
-        - ollama
+        - --model
+        - gpt-5.2-codex
       prompt_mode: stdin
       stdin_flag: "-"
       timeout_seconds: 120
