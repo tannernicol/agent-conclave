@@ -13,7 +13,7 @@ from typing import Any
 from conclave.config import get_config
 from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
-from conclave.pipeline import ConclavePipeline
+from conclave.pipeline import ConclavePipeline, PipelineResult
 from conclave.rag import NasIndex
 from conclave.scheduler import apply_schedule
 from conclave.store import DecisionStore
@@ -32,6 +32,68 @@ def _fail_on_insufficient(args: argparse.Namespace, config: Any) -> tuple[bool, 
     if bool(config.quality.get("strict", False)) and exit_code:
         return True, exit_code
     return False, exit_code
+
+
+def _build_meta(args: argparse.Namespace, input_path: str | None = None) -> dict | None:
+    meta: dict[str, Any] = {}
+    path = input_path or getattr(args, "input_file", None)
+    if path:
+        meta["input_path"] = path
+    if getattr(args, "max_evidence", None):
+        meta["evidence_limit"] = args.max_evidence
+    if getattr(args, "max_context_chars", None):
+        meta["context_char_limit"] = args.max_context_chars
+    return meta or None
+
+
+def _execute_run(
+    pipeline: ConclavePipeline,
+    query: str,
+    collections: list[str] | None,
+    meta: dict | None,
+    args: argparse.Namespace,
+) -> PipelineResult:
+    store = pipeline.store
+    run_id = store.create_run(query, meta=meta if meta else None)
+    stop_event = threading.Event()
+    progress_thread = None
+    if getattr(args, "progress", False):
+        progress_thread = threading.Thread(
+            target=_progress_printer,
+            args=(store, run_id, stop_event),
+            daemon=True,
+        )
+        progress_thread.start()
+        print(f"[conclave] run_id={run_id}", file=sys.stderr)
+
+    def _timeout_handler(signum, frame):
+        raise TimeoutError(f"run exceeded max_seconds={args.max_seconds}")
+
+    if getattr(args, "max_seconds", None):
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(int(args.max_seconds))
+
+    try:
+        result = pipeline.run(query, collections=collections, meta=meta, run_id=run_id)
+    except TimeoutError as exc:
+        store.fail_run(run_id, str(exc))
+        consensus = {
+            "answer": f"### Conclave timed out\n\n{exc}",
+            "confidence": "low",
+            "confidence_model": "low",
+            "confidence_auto": "low",
+            "pope": "### Conclave timed out",
+            "fallback_used": True,
+            "insufficient_evidence": True,
+        }
+        result = PipelineResult(run_id=run_id, consensus=consensus, artifacts={})
+    finally:
+        if getattr(args, "max_seconds", None):
+            signal.alarm(0)
+        stop_event.set()
+        if progress_thread:
+            progress_thread.join(timeout=1.0)
+    return result
 
 
 def cmd_models(args: argparse.Namespace) -> None:
@@ -59,45 +121,52 @@ def cmd_plan(args: argparse.Namespace) -> None:
 def cmd_run(args: argparse.Namespace) -> None:
     config = get_config()
     pipeline = ConclavePipeline(config)
-    meta = {}
-    if args.input_file:
-        meta["input_path"] = args.input_file
-    if args.max_evidence:
-        meta["evidence_limit"] = args.max_evidence
-    if args.max_context_chars:
-        meta["context_char_limit"] = args.max_context_chars
-    store = pipeline.store
-    run_id = store.create_run(args.query, meta=meta if meta else None)
-    stop_event = threading.Event()
-    progress_thread = None
-    if args.progress:
-        progress_thread = threading.Thread(
-            target=_progress_printer,
-            args=(store, run_id, stop_event),
-            daemon=True,
-        )
-        progress_thread.start()
-        print(f"[conclave] run_id={run_id}", file=sys.stderr)
-    def _timeout_handler(signum, frame):
-        raise TimeoutError(f"run exceeded max_seconds={args.max_seconds}")
-    if args.max_seconds:
-        signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(int(args.max_seconds))
-    try:
-        result = pipeline.run(args.query, collections=args.collection, meta=meta if meta else None, run_id=run_id)
-    finally:
-        if args.max_seconds:
-            signal.alarm(0)
-        stop_event.set()
-        if progress_thread:
-            progress_thread.join(timeout=1.0)
+    meta = _build_meta(args)
+    result = _execute_run(pipeline, args.query, args.collection, meta, args)
     _print({"run_id": result.run_id, "consensus": result.consensus})
     if args.output_md:
-        run = store.get_run(result.run_id) or {}
+        run = pipeline.store.get_run(result.run_id) or {}
         _write_markdown_report(Path(args.output_md), run, result.consensus, result.artifacts)
     fail_on, exit_code = _fail_on_insufficient(args, config)
     if fail_on and result.consensus.get("insufficient_evidence"):
         raise SystemExit(exit_code or 2)
+
+
+def cmd_hunt(args: argparse.Namespace) -> None:
+    config = get_config()
+    pipeline = ConclavePipeline(config)
+    query = args.query or "bounty: review current findings and propose next hunt steps"
+    output_dir = Path(args.output_dir) if args.output_dir else Path(args.input_file).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    max_runs = int(args.max_runs or 0)
+    run_count = 0
+    append_path = Path(args.append_md) if args.append_md else None
+    stop_on_insufficient = bool(args.stop_on_insufficient)
+    if not max_runs and args.sleep_seconds <= 0:
+        args.sleep_seconds = 600
+    while True:
+        run_count += 1
+        meta = _build_meta(args, input_path=args.input_file)
+        result = _execute_run(pipeline, query, args.collection, meta, args)
+        run = pipeline.store.get_run(result.run_id) or {}
+        snapshot_path = output_dir / f"conclave-hunt-{result.run_id}.md"
+        latest_path = output_dir / "conclave-hunt-latest.md"
+        _write_markdown_report(snapshot_path, run, result.consensus, result.artifacts)
+        _write_markdown_report(latest_path, run, result.consensus, result.artifacts)
+        if append_path:
+            _append_markdown_report(append_path, snapshot_path)
+        print(json.dumps({
+            "run_id": result.run_id,
+            "status": run.get("status"),
+            "insufficient": bool(result.consensus.get("insufficient_evidence")),
+            "report": str(snapshot_path),
+        }, indent=2))
+        if stop_on_insufficient and result.consensus.get("insufficient_evidence"):
+            break
+        if max_runs and run_count >= max_runs:
+            break
+        if args.sleep_seconds:
+            time.sleep(float(args.sleep_seconds))
 
 
 def cmd_runs(args: argparse.Namespace) -> None:
@@ -217,6 +286,20 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-context-chars", type=int)
     run.add_argument("--fail-on-insufficient", action="store_true")
     run.add_argument("--no-fail-on-insufficient", action="store_true")
+
+    hunt = sub.add_parser("hunt")
+    hunt.add_argument("--input-file", required=True)
+    hunt.add_argument("--query")
+    hunt.add_argument("--collection", action="append")
+    hunt.add_argument("--output-dir")
+    hunt.add_argument("--append-md")
+    hunt.add_argument("--max-runs", type=int)
+    hunt.add_argument("--sleep-seconds", type=float, default=600)
+    hunt.add_argument("--stop-on-insufficient", action="store_true")
+    hunt.add_argument("--progress", action="store_true")
+    hunt.add_argument("--max-seconds", type=int)
+    hunt.add_argument("--max-evidence", type=int)
+    hunt.add_argument("--max-context-chars", type=int)
 
     runs = sub.add_parser("runs")
     runs_sub = runs.add_subparsers(dest="runs_cmd")
@@ -345,6 +428,15 @@ def _write_markdown_report(path: Path, run: dict, consensus: dict, artifacts: di
     path.write_text("\n".join(lines).strip() + "\n")
 
 
+def _append_markdown_report(dest_path: Path, source_path: Path) -> None:
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    content = source_path.read_text()
+    with dest_path.open("a", encoding="utf-8") as handle:
+        if dest_path.exists() and dest_path.stat().st_size > 0:
+            handle.write("\n\n---\n\n")
+        handle.write(content.strip() + "\n")
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -354,6 +446,8 @@ def main() -> None:
         cmd_plan(args)
     elif args.command == "run":
         cmd_run(args)
+    elif args.command == "hunt":
+        cmd_hunt(args)
     elif args.command == "runs":
         cmd_runs(args)
     elif args.command == "reconcile":

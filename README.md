@@ -37,6 +37,7 @@ python -m conclave.cli schedule apply --enable
 python -m conclave.cli run --query "..." --fail-on-insufficient
 python -m conclave.cli run --query "..." --input-file /path/to/notes.md
 python -m conclave.cli run --query "..." --output-md /tmp/conclave.md --progress --max-seconds 1200
+python -m conclave.cli hunt --input-file /path/to/HUNT-HANDOFF.md --max-runs 5 --sleep-seconds 900 --append-md /tmp/hunt-log.md
 ```
 
 ## Configuration
