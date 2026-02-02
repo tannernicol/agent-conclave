@@ -10,11 +10,31 @@ import os
 import sqlite3
 import time
 import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class RagClient:
     base_url: str
+    errors: list[dict] | None = None
+
+    def __post_init__(self) -> None:
+        if self.errors is None:
+            self.errors = []
+
+    def _record_error(self, action: str, exc: Exception) -> None:
+        if self.errors is None:
+            self.errors = []
+        self.errors.append({"action": action, "error": str(exc)})
+
+    def drain_errors(self) -> list[dict]:
+        if self.errors is None:
+            return []
+        errors = list(self.errors)
+        self.errors.clear()
+        return errors
 
     def search(self, query: str, collection: Optional[str] = None, limit: int = 20, semantic: bool | None = None) -> list[dict]:
         params = {"q": query, "limit": limit}
@@ -27,7 +47,9 @@ class RagClient:
                 resp = client.get(f"{self.base_url}/api/rag/search", params=params)
                 resp.raise_for_status()
                 return resp.json().get("results", [])
-        except Exception:
+        except Exception as exc:
+            self._record_error("search", exc)
+            logger.warning("RAG search failed", exc_info=True)
             return []
 
     def collections(self) -> list[dict]:
@@ -36,7 +58,9 @@ class RagClient:
                 resp = client.get(f"{self.base_url}/api/rag/collections")
                 resp.raise_for_status()
                 return resp.json().get("collections", [])
-        except Exception:
+        except Exception as exc:
+            self._record_error("collections", exc)
+            logger.warning("RAG collections fetch failed", exc_info=True)
             return []
 
     def search_files(self, query: str, limit: int = 20, extension: Optional[str] = None) -> list[dict]:
@@ -48,7 +72,9 @@ class RagClient:
                 resp = client.get(f"{self.base_url}/api/search/files", params=params)
                 resp.raise_for_status()
                 return resp.json().get("results", [])
-        except Exception:
+        except Exception as exc:
+            self._record_error("search_files", exc)
+            logger.warning("RAG file search failed", exc_info=True)
             return []
 
 

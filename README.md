@@ -69,6 +69,7 @@ systemctl --user enable --now conclave-reconcile.timer
 - NAS index auto-build is off by default; run `conclave index` to build it.
 - MCP servers are detected from `~/.mcp.json` and logged into the audit trail.
 - RAG collections are discovered from `rag.tannner.com` and expanded by domain patterns.
+- High-fidelity mode is enforced via `quality.strict`; insufficient evidence returns a "needs more data" response.
 
 ## Tests (smoke + planner)
 

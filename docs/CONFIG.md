@@ -11,6 +11,7 @@ Key sections:
 - `planner`: role weights + preferences
 - `rag`: homelab-search endpoint + dynamic collection discovery
 - `index`: NAS allowlist + exclude patterns + auto_build/refresh
+- `quality`: evidence gating + signal thresholds for high-fidelity answers
 - `mcp`: detected from `~/.mcp.json` and logged (no tool calls by default)
 - `topics`: scheduled re-run topics
 
@@ -20,6 +21,7 @@ Key sections:
 - `max_results_per_collection`: cap results per collection
 - `prefer_non_pdf`: deprioritize PDF-heavy results
 - `dynamic_patterns`: include extra collections by keyword
+- `trust_explicit_collections`: when user passes collections, skip catalog lookup
 
 ### Topics scheduling
 Each topic can include:
@@ -29,3 +31,12 @@ Each topic can include:
 Use `conclave schedule apply --enable` to create and enable user-level timers.
 Use `--disable-legacy` to disable the legacy `conclave-reconcile.timer`.
 Schedules are validated with `systemd-analyze calendar` unless `--no-validate` is set.
+
+### Quality options
+- `strict`: if true, Conclave will refuse low-evidence answers
+- `min_evidence`: minimum number of evidence items to proceed
+- `low_signal_threshold`: minimum signal score for confidence
+- `high_signal_threshold`: score to allow high confidence
+- `high_evidence_min`: minimum evidence items required for high confidence
+- `pdf_ratio_limit`: if too PDF-heavy, downshift confidence
+- `off_domain_ratio_limit`: if evidence is mostly outside target collections, downshift confidence

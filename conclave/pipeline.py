@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import time
+import logging
 
 from conclave.config import Config
 from conclave.models.registry import ModelRegistry
@@ -39,6 +40,7 @@ class ConclavePipeline:
         self.store = DecisionStore(config.data_dir)
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
+        self.logger = logging.getLogger(__name__)
 
     def run(
         self,
@@ -65,13 +67,41 @@ class ConclavePipeline:
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
             context = self._retrieve_context(query, route)
-            self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"])}})
+            stats = context.get("stats", {})
+            self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"]), "evidence": stats.get("evidence_count", 0)}})
             audit.log("retrieve.complete", {
                 "rag_count": len(context["rag"]),
                 "nas_count": len(context["nas"]),
+                "evidence_count": stats.get("evidence_count", 0),
+                "pdf_ratio": stats.get("pdf_ratio", 0),
+                "max_signal_score": stats.get("max_signal_score", 0),
+                "rag_errors": stats.get("rag_errors", []),
                 "rag_samples": context["rag"][:3],
                 "nas_samples": context["nas"][:3],
             })
+            quality = self._evaluate_quality(context)
+            audit.log("quality.check", quality)
+            self.store.append_event(run_id, {"phase": "quality", **quality})
+            if quality.get("insufficient") and bool(self.config.quality.get("strict", True)):
+                consensus = self._insufficient_evidence_answer(query, quality)
+                artifacts = {
+                    "route": route,
+                    "context": context,
+                    "deliberation": {},
+                    "quality": quality,
+                    "reconcile": {
+                        "previous_run_id": self.store.latest().get("id") if self.store.latest() else None,
+                        "changed": True,
+                    },
+                }
+                self.store.finalize_run(run_id, consensus, artifacts)
+                audit.log("settlement.complete", {
+                    "consensus": consensus,
+                    "reconcile": artifacts["reconcile"],
+                    "quality": quality,
+                    "note": "insufficient_evidence",
+                })
+                return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
 
             self.store.append_event(run_id, {"phase": "deliberate", "status": "start"})
             deliberation = self._deliberate(query, context, route)
@@ -82,7 +112,7 @@ class ConclavePipeline:
                 "disagreements": deliberation.get("disagreements", []),
             })
 
-            consensus = self._summarize(query, context, deliberation, route)
+            consensus = self._summarize(query, context, deliberation, route, quality)
             previous = self.store.latest()
             reconcile = {
                 "previous_run_id": previous.get("id") if previous else None,
@@ -92,6 +122,7 @@ class ConclavePipeline:
                 "route": route,
                 "context": context,
                 "deliberation": deliberation,
+                "quality": quality,
                 "reconcile": reconcile,
             }
             self.store.finalize_run(run_id, consensus, artifacts)
@@ -145,7 +176,7 @@ class ConclavePipeline:
         if any(word in q for word in ["bounty", "vuln", "exploit", "smart contract", "immunefi"]):
             domain = "bounty"
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
-        selected, catalog = self._expand_collections(domain, base)
+        selected, catalog = self._expand_collections(domain, base, explicit=bool(collections))
         roles = ["router", "reasoner", "critic", "summarizer"]
         plan_with_rationale = self.planner.plan_with_rationale(roles, self.registry.list_models())
         return {
@@ -175,7 +206,11 @@ class ConclavePipeline:
         combined_files = file_results + nas_results
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
-        return {"rag": rag_results, "nas": combined_files}
+        evidence, stats = self._select_evidence(rag_results, combined_files, preferred_collections=route.get("collections", []))
+        rag_errors = self.rag.drain_errors()
+        if rag_errors:
+            stats["rag_errors"] = rag_errors
+        return {"rag": rag_results, "nas": combined_files, "evidence": evidence, "stats": stats}
 
     def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
@@ -201,14 +236,22 @@ class ConclavePipeline:
             "disagreements": self._extract_disagreements(critic_out),
         }
 
-    def _summarize(self, query: str, context: Dict[str, Any], deliberation: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
+    def _summarize(self, query: str, context: Dict[str, Any], deliberation: Dict[str, Any], route: Dict[str, Any], quality: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
         summarizer_model = plan.get("summarizer") or plan.get("reasoner")
         context_blob = self._format_context(context)
+        evidence_hint = (
+            f"Evidence count: {quality.get('evidence_count', 0)}, "
+            f"pdf_ratio: {quality.get('pdf_ratio', 0):.2f}, "
+            f"off_domain_ratio: {quality.get('off_domain_ratio', 0):.2f}, "
+            f"signal: {quality.get('max_signal_score', 0):.2f}"
+        )
         summary_prompt = (
-            "You are the summarizer. Produce a final consensus answer with bullet points and cite key evidence."
-            " Include a confidence level (low/medium/high).\n\n"
+            "You are the summarizer. Produce a final consensus answer with bullet points."
+            " Include an Evidence section listing the top sources (file paths or collection names)."
+            " Include Risks/Uncertainties and Follow-ups. Include a confidence level (low/medium/high).\n\n"
             f"Question: {query}\n\nContext:\n{context_blob}\n\n"
+            f"Evidence quality: {evidence_hint}\n\n"
             f"Reasoner notes:\n{deliberation.get('reasoner', '')}\n\n"
             f"Critic notes:\n{deliberation.get('critic', '')}\n"
         )
@@ -217,9 +260,14 @@ class ConclavePipeline:
         if not summary.strip():
             summary = self._fallback_summary(query, deliberation)
             fallback_used = True
+        model_conf = self._extract_confidence(summary)
+        auto_conf = self._auto_confidence(quality)
+        final_conf = self._merge_confidence(model_conf, auto_conf)
         return {
             "answer": summary.strip(),
-            "confidence": self._extract_confidence(summary),
+            "confidence": final_conf,
+            "confidence_model": model_conf,
+            "confidence_auto": auto_conf,
             "pope": summary.strip().splitlines()[0] if summary.strip() else "",
             "fallback_used": fallback_used,
         }
@@ -272,6 +320,18 @@ class ConclavePipeline:
 
     def _format_context(self, context: Dict[str, Any]) -> str:
         lines = []
+        evidence = context.get("evidence") or []
+        if evidence:
+            for item in evidence[:12]:
+                title = item.get("title") or item.get("path")
+                source = item.get("source", "context").upper()
+                meta = f"{item.get('collection', '')}".strip()
+                if meta:
+                    meta = f" ({meta})"
+                lines.append(
+                    f"- [{source}] {title}{meta}: {item.get('snippet') or ''} [signal={item.get('signal_score', 0):.2f}]"
+                )
+            return "\n".join(lines)
         for item in context.get("rag", [])[:12]:
             title = item.get("title") or item.get("name") or item.get("path")
             lines.append(f"- [RAG] {title}: {item.get('snippet') or item.get('match_line') or ''}")
@@ -287,6 +347,30 @@ class ConclavePipeline:
             return "low"
         if "confidence" in lower:
             return "medium"
+        return "medium"
+
+    def _merge_confidence(self, model: str, auto: str) -> str:
+        order = {"low": 0, "medium": 1, "high": 2}
+        return auto if order.get(auto, 1) < order.get(model, 1) else model
+
+    def _auto_confidence(self, quality: Dict[str, Any]) -> str:
+        issues = set(quality.get("issues", []))
+        if quality.get("insufficient") or "rag_errors" in issues:
+            return "low"
+        pdf_ratio = float(quality.get("pdf_ratio", 0))
+        off_domain_ratio = float(quality.get("off_domain_ratio", 0))
+        evidence_count = int(quality.get("evidence_count", 0))
+        max_signal = float(quality.get("max_signal_score", 0))
+        avg_signal = float(quality.get("avg_signal_score", 0))
+        if "pdf_heavy" in issues or "off_domain" in issues:
+            return "medium"
+        high_min = int(self.config.quality.get("high_evidence_min", 6))
+        if avg_signal >= float(self.config.quality.get("high_signal_threshold", 1.5)) and evidence_count >= high_min and pdf_ratio < 0.5:
+            return "high"
+        if off_domain_ratio > 0.5:
+            return "low"
+        if evidence_count < int(self.config.quality.get("min_evidence", 2)) or max_signal < float(self.config.quality.get("low_signal_threshold", 0.5)):
+            return "low"
         return "medium"
 
     def _fallback_summary(self, query: str, deliberation: Dict[str, Any]) -> str:
@@ -314,6 +398,38 @@ class ConclavePipeline:
         lines.append("**Confidence Level**: Low")
         return "\n".join(lines)
 
+    def _insufficient_evidence_answer(self, query: str, quality: Dict[str, Any]) -> Dict[str, Any]:
+        details = []
+        details.append(f"- Evidence count: {quality.get('evidence_count', 0)} (min {self.config.quality.get('min_evidence', 2)})")
+        details.append(f"- Max signal score: {quality.get('max_signal_score', 0):.2f}")
+        details.append(f"- PDF ratio: {quality.get('pdf_ratio', 0):.2f}")
+        if quality.get("rag_errors"):
+            details.append(f"- Retrieval errors: {len(quality.get('rag_errors', []))} (rag.tannner.com)")
+        answer = "\n".join([
+            "### Insufficient Evidence for High-Fidelity Answer",
+            "",
+            f"**Query:** {query}",
+            "",
+            "**Why this is insufficient:**",
+            *details,
+            "",
+            "**Recommended next steps:**",
+            "- Specify the target collection explicitly (e.g., tax-rag, health-rag).",
+            "- Run `conclave index` if NAS context is missing.",
+            "- Add/clean high-signal sources (markdown or structured notes).",
+            "- Check `rag.tannner.com` availability if retrieval failed.",
+            "",
+            "**Confidence Level: Low**",
+        ])
+        return {
+            "answer": answer,
+            "confidence": "low",
+            "confidence_model": "low",
+            "confidence_auto": "low",
+            "pope": "### Insufficient Evidence for High-Fidelity Answer",
+            "fallback_used": True,
+        }
+
     def _extract_disagreements(self, critic: str) -> list[str]:
         lines = []
         capture = False
@@ -334,13 +450,137 @@ class ConclavePipeline:
                     lines.append(numbered.sub("", stripped).strip())
         return lines
 
-    def _expand_collections(self, domain: str, base: List[str]) -> tuple[List[str], Dict[str, Any]]:
+    def _score_item(self, item: Dict[str, Any], source: str, preferred_collections: List[str] | None = None) -> Dict[str, Any]:
+        path = item.get("path") or item.get("file_path") or item.get("name")
+        title = item.get("title") or item.get("name") or (Path(path).name if path else "unknown")
+        snippet = item.get("snippet") or item.get("match_line") or ""
+        match_type = str(item.get("match_type", "")).lower()
+        collection = item.get("collection") or item.get("source")
+        score_val = 0.0
+        try:
+            score_val = float(item.get("score", 0.0))
+        except Exception:
+            score_val = 0.0
+        ext = Path(path).suffix.lower() if path else ""
+        signal = 1.0 + min(score_val, 1.0) * 0.4
+        if ext == ".pdf":
+            signal -= 0.3
+        elif ext in {".md", ".txt", ".json", ".yaml", ".yml", ".toml"}:
+            signal += 0.3
+        if match_type == "filename":
+            signal -= 0.2
+        if len(snippet.strip()) < 40:
+            signal -= 0.2
+        if preferred_collections:
+            if collection and collection in preferred_collections:
+                signal += 0.2
+            elif collection:
+                signal -= 0.2
+        mtime = None
+        if path:
+            try:
+                stat = Path(path).stat()
+                mtime = stat.st_mtime
+                age_days = (time.time() - mtime) / 86400
+                if age_days < 30:
+                    signal += 0.3
+                elif age_days < 180:
+                    signal += 0.1
+                elif age_days > 730:
+                    signal -= 0.2
+            except Exception:
+                pass
+        if signal < 0:
+            signal = 0.0
+        return {
+            "source": source,
+            "path": path,
+            "title": title,
+            "snippet": snippet,
+            "collection": collection,
+            "extension": ext,
+            "signal_score": round(signal, 3),
+            "mtime": mtime,
+        }
+
+    def _select_evidence(
+        self,
+        rag: List[Dict[str, Any]],
+        nas: List[Dict[str, Any]],
+        limit: int = 12,
+        preferred_collections: List[str] | None = None,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        items = [self._score_item(item, "rag", preferred_collections) for item in rag] + [
+            self._score_item(item, "nas", preferred_collections) for item in nas
+        ]
+        items.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
+        selected: List[Dict[str, Any]] = []
+        seen = set()
+        for item in items:
+            key = (item.get("path") or item.get("title") or "").lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            selected.append(item)
+            if len(selected) >= limit:
+                break
+        pdf_count = sum(1 for item in selected if item.get("extension") == ".pdf")
+        off_domain = 0
+        if preferred_collections:
+            for item in selected:
+                collection = item.get("collection")
+                if collection and collection not in preferred_collections:
+                    off_domain += 1
+        stats = {
+            "evidence_count": len(selected),
+            "total_candidates": len(items),
+            "pdf_ratio": (pdf_count / len(selected)) if selected else 0.0,
+            "max_signal_score": max([item.get("signal_score", 0) for item in selected], default=0),
+            "avg_signal_score": round(sum(item.get("signal_score", 0) for item in selected) / len(selected), 3) if selected else 0.0,
+            "off_domain_ratio": (off_domain / len(selected)) if selected else 0.0,
+        }
+        return selected, stats
+
+    def _evaluate_quality(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        stats = context.get("stats", {})
+        min_evidence = int(self.config.quality.get("min_evidence", 2))
+        pdf_ratio_limit = float(self.config.quality.get("pdf_ratio_limit", 0.7))
+        off_domain_limit = float(self.config.quality.get("off_domain_ratio_limit", 0.5))
+        low_signal_threshold = float(self.config.quality.get("low_signal_threshold", 0.5))
+        evidence_count = int(stats.get("evidence_count", 0))
+        max_signal = float(stats.get("max_signal_score", 0))
+        avg_signal = float(stats.get("avg_signal_score", 0))
+        pdf_ratio = float(stats.get("pdf_ratio", 0))
+        off_domain_ratio = float(stats.get("off_domain_ratio", 0))
+        issues = []
+        if evidence_count < min_evidence:
+            issues.append("insufficient_evidence")
+        if max_signal < low_signal_threshold:
+            issues.append("low_signal")
+        if pdf_ratio > pdf_ratio_limit:
+            issues.append("pdf_heavy")
+        if off_domain_ratio > off_domain_limit:
+            issues.append("off_domain")
+        if stats.get("rag_errors"):
+            issues.append("rag_errors")
+        return {
+            "evidence_count": evidence_count,
+            "max_signal_score": max_signal,
+            "avg_signal_score": avg_signal,
+            "pdf_ratio": pdf_ratio,
+            "off_domain_ratio": off_domain_ratio,
+            "rag_errors": stats.get("rag_errors", []),
+            "issues": issues,
+            "insufficient": bool(issues and ("insufficient_evidence" in issues or "low_signal" in issues)),
+        }
+
+    def _expand_collections(self, domain: str, base: List[str], explicit: bool = False) -> tuple[List[str], Dict[str, Any]]:
         rag_cfg = self.config.rag
         use_server = bool(rag_cfg.get("use_server_collections", True))
         skip_empty = bool(rag_cfg.get("skip_empty_collections", True))
         patterns = rag_cfg.get("dynamic_patterns", {}).get(domain, [])
         catalog = {"server": [], "selected": []}
-        if not use_server:
+        if not use_server or (explicit and rag_cfg.get("trust_explicit_collections", True)):
             return list(dict.fromkeys(base)), catalog
         server = self.rag.collections()
         catalog["server"] = server
@@ -355,7 +595,7 @@ class ConclavePipeline:
                 continue
             available[name] = item
         selected = list(dict.fromkeys([c for c in base if c in available or not skip_empty]))
-        if patterns:
+        if patterns and not explicit:
             for name, meta in available.items():
                 blob = f"{name} {meta.get('description','')}".lower()
                 if any(pat in blob for pat in patterns):

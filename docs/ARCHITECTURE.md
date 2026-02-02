@@ -69,6 +69,7 @@ conclave/
   - model invocations (role, model id, latency, ok/error)
   - deliberation disagreements
   - settlement and reconciliation
+  - quality checks and evidence statistics
 
 ## Security & privacy
 - Local-only inference (Ollama), no paid API tokens by default

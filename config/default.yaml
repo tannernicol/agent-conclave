@@ -96,6 +96,7 @@ rag:
   base_url: http://localhost:8091
   use_server_collections: true
   skip_empty_collections: true
+  trust_explicit_collections: true
   max_results_per_collection: 8
   prefer_non_pdf: true
   default_collections:
@@ -158,6 +159,15 @@ calibration:
   enabled: true
   max_seconds: 20
   ping_prompt: "Return only: OK"
+
+quality:
+  strict: true
+  min_evidence: 2
+  low_signal_threshold: 0.5
+  high_signal_threshold: 1.5
+  high_evidence_min: 6
+  pdf_ratio_limit: 0.7
+  off_domain_ratio_limit: 0.5
 
 topics:
   - id: tax-checkup

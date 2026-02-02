@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 import json
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +41,7 @@ class ModelRegistry:
                 else:
                     self.cards[model_id] = stored
         except Exception:
+            logger.warning("Failed to load registry data", exc_info=True)
             return
 
     def save(self) -> None:

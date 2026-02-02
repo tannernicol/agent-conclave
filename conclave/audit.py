@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 import json
 import time
+from datetime import datetime
 
 
 @dataclass
@@ -14,7 +15,7 @@ class AuditLog:
 
     def log(self, event: str, data: Dict[str, Any] | None = None) -> None:
         payload = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
             "event": event,
             "data": data or {},
         }
