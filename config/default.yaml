@@ -12,6 +12,7 @@ models:
     - id: ollama:qwen2.5-coder:7b
       provider: ollama
       kind: local
+      model_label: qwen2.5-coder:7b
       capabilities:
         text_reasoning: true
         code_generation: true
@@ -34,6 +35,7 @@ models:
     - id: ollama:qwen2.5-coder:32b
       provider: ollama
       kind: local
+      model_label: qwen2.5-coder:32b
       capabilities:
         text_reasoning: true
         code_generation: true
@@ -56,6 +58,7 @@ models:
     - id: ollama:qwen2.5:32b
       provider: ollama
       kind: local
+      model_label: qwen2.5:32b
       capabilities:
         text_reasoning: true
         code_generation: low
@@ -78,6 +81,7 @@ models:
     - id: cli:claude
       provider: cli
       kind: external
+      model_label: claude:opus-4.5
       command:
         - /home/tanner/.local/bin/claude
         - --print
@@ -110,6 +114,7 @@ models:
     - id: cli:codex
       provider: cli
       kind: external
+      model_label: gpt-oss:20b
       command:
         - /usr/local/bin/codex
         - exec

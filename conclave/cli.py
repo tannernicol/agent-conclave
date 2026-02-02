@@ -340,18 +340,24 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
             model = event.get("model_id") or event.get("model")
             detail = ""
             if role and model:
-                detail = f"{role}->{model}"
+                label = event.get("model_label") or model
+                detail = f"{role}->{label}"
             elif model:
                 detail = str(model)
             if phase == "route" and status == "done":
-                plan = event.get("models") or (event.get("route") or {}).get("plan") or {}
+                plan = event.get("models") or (event.get("route") or {}).get("plan_details") or (event.get("route") or {}).get("plan") or {}
                 parts = []
-                if plan.get("reasoner"):
-                    parts.append(f"reasoner->{plan.get('reasoner')}")
-                if plan.get("critic"):
-                    parts.append(f"critic->{plan.get('critic')}")
-                if plan.get("summarizer"):
-                    parts.append(f"summarizer->{plan.get('summarizer')}")
+                def _label(role_key: str):
+                    value = plan.get(role_key)
+                    if isinstance(value, dict):
+                        return value.get("label") or value.get("id")
+                    return value
+                if _label("reasoner"):
+                    parts.append(f"reasoner->{_label('reasoner')}")
+                if _label("critic"):
+                    parts.append(f"critic->{_label('critic')}")
+                if _label("summarizer"):
+                    parts.append(f"summarizer->{_label('summarizer')}")
                 if parts:
                     detail = " ".join(parts)
             line = " ".join(part for part in [event.get("timestamp", ""), phase, status, detail] if part)

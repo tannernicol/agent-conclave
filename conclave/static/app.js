@@ -314,13 +314,21 @@ function renderEvidence(run) {
 }
 
 function renderModelFooter(run) {
-  const plan = run?.artifacts?.route?.plan;
-  if (!plan) return '';
+  const route = run?.artifacts?.route;
+  const planDetails = route?.plan_details;
+  const plan = route?.plan;
+  if (!plan && !planDetails) return '';
+  const pick = (role) => {
+    if (planDetails && planDetails[role]) {
+      return planDetails[role].label || planDetails[role].id;
+    }
+    return plan ? plan[role] : '';
+  };
   const parts = [
-    plan.router ? `Router: ${plan.router}` : null,
-    plan.reasoner ? `Reasoner: ${plan.reasoner}` : null,
-    plan.critic ? `Critic: ${plan.critic}` : null,
-    plan.summarizer ? `Summarizer: ${plan.summarizer}` : null,
+    pick('router') ? `Router: ${pick('router')}` : null,
+    pick('reasoner') ? `Reasoner: ${pick('reasoner')}` : null,
+    pick('critic') ? `Critic: ${pick('critic')}` : null,
+    pick('summarizer') ? `Summarizer: ${pick('summarizer')}` : null,
   ].filter(Boolean);
   if (!parts.length) return '';
   return `<div class="model-footer">Models: ${escapeHtml(parts.join(' · '))}</div>`;
@@ -331,14 +339,17 @@ function summarizeEvent(event) {
   const phase = event.phase || event.event || 'event';
   let detail = '';
   if (event.status) detail = event.status;
-  if (event.role && event.model_id) detail = `${event.role} → ${event.model_id}`;
+  if (event.role && event.model_id) detail = `${event.role} → ${event.model_label || event.model_id}`;
   if (event.role && event.ok === false) detail += ' (failed)';
   if (event.phase === 'route' && event.status === 'done') {
-    const plan = event.models || (event.route && event.route.plan) || {};
+    const plan = event.models || (event.route && (event.route.plan_details || event.route.plan)) || {};
     const parts = [];
-    if (plan.reasoner) parts.push(`reasoner:${plan.reasoner}`);
-    if (plan.critic) parts.push(`critic:${plan.critic}`);
-    if (plan.summarizer) parts.push(`summarizer:${plan.summarizer}`);
+    const reasoner = plan.reasoner?.label || plan.reasoner?.id || plan.reasoner;
+    const critic = plan.critic?.label || plan.critic?.id || plan.critic;
+    const summarizer = plan.summarizer?.label || plan.summarizer?.id || plan.summarizer;
+    if (reasoner) parts.push(`reasoner:${reasoner}`);
+    if (critic) parts.push(`critic:${critic}`);
+    if (summarizer) parts.push(`summarizer:${summarizer}`);
     if (parts.length) detail = parts.join(' ');
   }
   if (event.phase === 'quality' && event.issues && event.issues.length) {

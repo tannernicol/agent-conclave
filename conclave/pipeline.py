@@ -87,7 +87,9 @@ class ConclavePipeline:
 
             self.store.append_event(run_id, {"phase": "route", "status": "start"})
             route = self._route_query(query, collections)
-            self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route, "models": route.get("plan", {})})
+            plan_details = self._plan_details(route.get("plan", {}))
+            route["plan_details"] = plan_details
+            self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route, "models": plan_details})
             audit.log("route.decided", route)
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
@@ -556,6 +558,7 @@ class ConclavePipeline:
     def _call_model(self, model_id: Optional[str], prompt: str, role: Optional[str] = None) -> str:
         if not model_id:
             return ""
+        model_label = self._model_label(model_id)
         if model_id.startswith("ollama:"):
             model = model_id.split(":", 1)[1]
             result = self.ollama.generate(model, prompt, temperature=0.2)
@@ -565,6 +568,7 @@ class ConclavePipeline:
             payload = {
                 "role": role,
                 "model_id": model_id,
+                "model_label": model_label,
                 "ok": result.ok,
                 "duration_ms": round(result.duration_ms, 2),
                 "error": result.error,
@@ -579,9 +583,13 @@ class ConclavePipeline:
             self._record_model_observation(model_id, result)
             audit = self._audit
             run_id = self._run_id
+            cli_label = self._parse_cli_model_label(result.stderr or "")
+            if cli_label:
+                model_label = cli_label
             payload = {
                 "role": role,
                 "model_id": model_id,
+                "model_label": model_label,
                 "ok": result.ok,
                 "duration_ms": round(result.duration_ms, 2),
                 "error": result.error,
@@ -612,6 +620,28 @@ class ConclavePipeline:
             env=env,
         )
         return result
+
+    def _model_label(self, model_id: str) -> str:
+        card = self.registry.get_model(model_id) or {}
+        return str(card.get("model_label") or card.get("model_name") or model_id)
+
+    def _parse_cli_model_label(self, stderr: str) -> str | None:
+        import re
+        match = re.search(r"model:\\s*([A-Za-z0-9._:-]+)", stderr)
+        if match:
+            return match.group(1)
+        return None
+
+    def _plan_details(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        details: Dict[str, Any] = {}
+        for role, model_id in (plan or {}).items():
+            if not model_id:
+                continue
+            details[role] = {
+                "id": model_id,
+                "label": self._model_label(model_id),
+            }
+        return details
 
     def _record_model_observation(self, model_id: str, result: Any) -> None:
         card = self.registry.get_model(model_id) or {}
