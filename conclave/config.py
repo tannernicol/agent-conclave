@@ -73,6 +73,21 @@ def load_config() -> Dict[str, Any]:
     if calibration_enabled is not None:
         data.setdefault("calibration", {})["enabled"] = calibration_enabled.lower() in ("true", "1", "yes")
 
+    # Environment overrides - Pipeline settings
+    run_timeout = os.getenv("CONCLAVE_RUN_TIMEOUT")
+    if run_timeout:
+        try:
+            data.setdefault("pipeline", {})["run_timeout_seconds"] = int(run_timeout)
+        except ValueError:
+            pass
+
+    cli_timeout = os.getenv("CONCLAVE_CLI_TIMEOUT")
+    if cli_timeout:
+        try:
+            data.setdefault("pipeline", {})["cli_timeout_seconds"] = int(cli_timeout)
+        except ValueError:
+            pass
+
     return data
 
 
@@ -128,6 +143,20 @@ class Config:
     def mcp_config_path(self) -> Path | None:
         path = self.raw.get("mcp_config_path")
         return Path(path) if path else None
+
+    @property
+    def pipeline(self) -> Dict[str, Any]:
+        return self.raw.get("pipeline", {})
+
+    @property
+    def run_timeout_seconds(self) -> int:
+        """Maximum time for a single pipeline run in seconds. Default 10 minutes."""
+        return int(self.pipeline.get("run_timeout_seconds", 600))
+
+    @property
+    def cli_timeout_seconds(self) -> int:
+        """Timeout for CLI model calls in seconds. Default 3 minutes."""
+        return int(self.pipeline.get("cli_timeout_seconds", 180))
 
 
 def get_config() -> Config:

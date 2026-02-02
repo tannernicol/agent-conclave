@@ -6,6 +6,7 @@ import logging
 import subprocess
 import threading
 import time
+import queue
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -29,6 +30,30 @@ class MCPServer:
     process: subprocess.Popen
     request_id: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
+    response_queue: queue.Queue = field(default_factory=queue.Queue)
+    reader_thread: threading.Thread | None = None
+    _shutdown: bool = False
+
+    def __post_init__(self):
+        """Start the response reader thread."""
+        self.reader_thread = threading.Thread(target=self._read_responses, daemon=True)
+        self.reader_thread.start()
+
+    def _read_responses(self):
+        """Background thread to read responses from MCP server."""
+        while not self._shutdown:
+            try:
+                line = self.process.stdout.readline()
+                if not line:
+                    if self._shutdown:
+                        break
+                    time.sleep(0.01)
+                    continue
+                self.response_queue.put(line)
+            except Exception as e:
+                if not self._shutdown:
+                    logger.warning(f"MCP reader error for {self.name}: {e}")
+                break
 
     def _next_id(self) -> int:
         self.request_id += 1
@@ -51,14 +76,27 @@ class MCPServer:
             }
 
             try:
+                # Clear any stale responses
+                while not self.response_queue.empty():
+                    try:
+                        self.response_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
                 # Send request
                 request_line = json.dumps(request) + "\n"
                 self.process.stdin.write(request_line)
                 self.process.stdin.flush()
 
-                # Read response with timeout
-                self.process.stdout.settimeout(timeout)
-                response_line = self.process.stdout.readline()
+                # Wait for response with timeout
+                try:
+                    response_line = self.response_queue.get(timeout=timeout)
+                except queue.Empty:
+                    return MCPResponse(
+                        ok=False,
+                        error=f"MCP call timed out after {timeout}s",
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
 
                 if not response_line:
                     return MCPResponse(
@@ -82,7 +120,12 @@ class MCPServer:
                 if content and isinstance(content, list):
                     texts = [c.get("text", "") for c in content if c.get("type") == "text"]
                     if texts:
-                        result = "\n".join(texts)
+                        # Try to parse as JSON
+                        combined = "\n".join(texts)
+                        try:
+                            result = json.loads(combined)
+                        except json.JSONDecodeError:
+                            result = combined
 
                 return MCPResponse(
                     ok=True,
@@ -96,10 +139,10 @@ class MCPServer:
                     error=f"Invalid JSON response: {e}",
                     duration_ms=(time.perf_counter() - start) * 1000,
                 )
-            except subprocess.TimeoutExpired:
+            except BrokenPipeError:
                 return MCPResponse(
                     ok=False,
-                    error=f"MCP call timed out after {timeout}s",
+                    error="MCP server pipe broken - server may have crashed",
                     duration_ms=(time.perf_counter() - start) * 1000,
                 )
             except Exception as e:
@@ -111,6 +154,7 @@ class MCPServer:
 
     def close(self) -> None:
         """Terminate the MCP server process."""
+        self._shutdown = True
         try:
             self.process.terminate()
             self.process.wait(timeout=5)
@@ -140,7 +184,12 @@ class MCPBridge:
     def _start_server(self, name: str) -> MCPServer | None:
         """Start an MCP server process."""
         if name in self.servers:
-            return self.servers[name]
+            # Check if server is still alive
+            if self.servers[name].process.poll() is None:
+                return self.servers[name]
+            else:
+                logger.info(f"MCP server '{name}' died, restarting...")
+                del self.servers[name]
 
         server_config = self.config.get(name)
         if not server_config:
@@ -149,12 +198,17 @@ class MCPBridge:
 
         command = server_config.get("command")
         args = server_config.get("args", [])
+        env = server_config.get("env", {})
 
         if not command:
             logger.warning(f"MCP server '{name}' has no command")
             return None
 
         try:
+            import os
+            run_env = os.environ.copy()
+            run_env.update(env)
+
             process = subprocess.Popen(
                 [command] + args,
                 stdin=subprocess.PIPE,
@@ -162,7 +216,11 @@ class MCPBridge:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                env=run_env,
             )
+
+            # Give server a moment to start
+            time.sleep(0.1)
 
             # Send initialize request
             init_request = {
@@ -178,7 +236,14 @@ class MCPBridge:
             process.stdin.write(json.dumps(init_request) + "\n")
             process.stdin.flush()
 
-            # Wait for initialize response
+            # Wait for initialize response with timeout
+            import select
+            ready, _, _ = select.select([process.stdout], [], [], 10.0)
+            if not ready:
+                process.kill()
+                logger.warning(f"MCP server '{name}' did not respond to initialize within 10s")
+                return None
+
             response_line = process.stdout.readline()
             if not response_line:
                 process.kill()
@@ -224,15 +289,15 @@ class MCPBridge:
 
     def money_summary(self) -> MCPResponse:
         """Get financial summary."""
-        return self.call("money", "money_summary")
+        return self.call("money", "money_summary", timeout=15.0)
 
     def money_networth(self, range: str = "1y") -> MCPResponse:
         """Get net worth history."""
-        return self.call("money", "money_networth", {"range": range})
+        return self.call("money", "money_networth", {"range": range}, timeout=15.0)
 
     def money_spending(self) -> MCPResponse:
         """Get current month spending breakdown."""
-        return self.call("money", "money_spending")
+        return self.call("money", "money_spending", timeout=15.0)
 
     def bounty_rag_query(self, query: str, category: str = "all", limit: int = 10) -> MCPResponse:
         """Query bounty RAG for vulnerability patterns."""
@@ -240,14 +305,14 @@ class MCPBridge:
             "query": query,
             "category": category,
             "limit": limit,
-        })
+        }, timeout=30.0)
 
     def bounty_semantic_search(self, query: str, top_k: int = 5) -> MCPResponse:
         """Semantic search for similar vulnerabilities."""
         return self.call("bounty-training", "bounty_semantic_search", {
             "query": query,
             "top_k": top_k,
-        })
+        }, timeout=30.0)
 
     def bounty_predict_outcome(self, vuln_type: str, description: str, target: str = None, severity: str = None) -> MCPResponse:
         """Predict submission outcome based on similar findings."""
@@ -256,18 +321,18 @@ class MCPBridge:
             args["target"] = target
         if severity:
             args["severity"] = severity
-        return self.call("bounty-training", "bounty_predict_outcome", args)
+        return self.call("bounty-training", "bounty_predict_outcome", args, timeout=30.0)
 
     def bounty_false_positive_patterns(self, vuln_type: str) -> MCPResponse:
         """Get known false positive patterns for a vulnerability type."""
-        return self.call("bounty-training", "bounty_false_positive_patterns", {"vuln_type": vuln_type})
+        return self.call("bounty-training", "bounty_false_positive_patterns", {"vuln_type": vuln_type}, timeout=15.0)
 
     def memory_learn(self, category: str, learning: str, context: str = None, importance: str = "medium") -> MCPResponse:
         """Store a learning for future sessions."""
         args = {"category": category, "learning": learning, "importance": importance}
         if context:
             args["context"] = context
-        return self.call("memory", "memory_learn", args)
+        return self.call("memory", "memory_learn", args, timeout=10.0)
 
     def memory_recall(self, category: str = None, search: str = None, limit: int = 20) -> MCPResponse:
         """Recall learnings from memory."""
@@ -276,11 +341,11 @@ class MCPBridge:
             args["category"] = category
         if search:
             args["search"] = search
-        return self.call("memory", "memory_recall", args)
+        return self.call("memory", "memory_recall", args, timeout=15.0)
 
     def memory_log_action(self, action: str, result: str = None) -> MCPResponse:
         """Log an action to today's session thread."""
         args = {"action": action}
         if result:
             args["result"] = result
-        return self.call("memory", "memory_log_action", args)
+        return self.call("memory", "memory_log_action", args, timeout=10.0)

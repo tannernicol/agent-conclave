@@ -24,6 +24,11 @@ from conclave.mcp_bridge import MCPBridge
 from conclave.sources import HealthDashboardClient, MoneyClient
 
 
+class RunTimeoutError(Exception):
+    """Raised when a pipeline run exceeds its timeout."""
+    pass
+
+
 @dataclass
 class PipelineResult:
     run_id: str
@@ -58,11 +63,21 @@ class ConclavePipeline:
         self.mcp = MCPBridge(config_path=config.mcp_config_path)
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
+        self._run_start_time: float = 0.0
         self._context_char_limit: int | None = None
         self._calibration_cache: Dict[str, Dict[str, Any]] = {}
         self._calibration_cache_time: float = 0.0
         self._calibration_cache_ttl: float = 300.0  # 5 minutes
         self.logger = logging.getLogger(__name__)
+
+    def _check_timeout(self, phase: str = "unknown") -> None:
+        """Check if the current run has exceeded its timeout."""
+        if self._run_start_time <= 0:
+            return
+        elapsed = time.time() - self._run_start_time
+        timeout = self.config.run_timeout_seconds
+        if elapsed > timeout:
+            raise RunTimeoutError(f"Run exceeded {timeout}s timeout during {phase} phase (elapsed: {elapsed:.1f}s)")
 
     def run(
         self,
@@ -75,6 +90,7 @@ class ConclavePipeline:
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
         self._audit = audit
         self._run_id = run_id
+        self._run_start_time = time.time()
         self._context_char_limit = None
         if meta and meta.get("context_char_limit"):
             try:
@@ -87,11 +103,12 @@ class ConclavePipeline:
             except Exception:
                 pass
         audit.log("mcp.available", {"servers": list(load_mcp_servers().keys())})
-        audit.log("run.start", {"query": query, "meta": meta or {}})
+        audit.log("run.start", {"query": query, "meta": meta or {}, "timeout": self.config.run_timeout_seconds})
         try:
             self.store.append_event(run_id, {"phase": "preflight", "status": "start"})
             self._calibrate_models(run_id)
             audit.log("preflight.complete")
+            self._check_timeout("preflight")
 
             self.store.append_event(run_id, {"phase": "route", "status": "start"})
             route = self._route_query(query, collections)
@@ -99,9 +116,11 @@ class ConclavePipeline:
             route["plan_details"] = plan_details
             self.store.append_event(run_id, {"phase": "route", "status": "done", "route": route, "models": plan_details})
             audit.log("route.decided", route)
+            self._check_timeout("route")
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
             context = self._retrieve_context(query, route, meta)
+            self._check_timeout("retrieve")
             stats = context.get("stats", {})
             self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"]), "evidence": stats.get("evidence_count", 0)}})
             audit.log("retrieve.complete", {
@@ -147,6 +166,7 @@ class ConclavePipeline:
                 })
                 return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
 
+            self._check_timeout("quality")
             self.store.append_event(run_id, {"phase": "deliberate", "status": "start"})
             deliberation = self._deliberate(query, context, route)
             self.store.append_event(run_id, {"phase": "deliberate", "status": "done", "agreement": deliberation.get("agreement")})
@@ -157,6 +177,7 @@ class ConclavePipeline:
                 "rounds": deliberation.get("rounds", []),
                 "agreement": deliberation.get("agreement"),
             })
+            self._check_timeout("deliberate")
 
             consensus = self._summarize(query, context, deliberation, route, quality)
             if route.get("domain") == "bounty":
@@ -199,6 +220,11 @@ class ConclavePipeline:
             self._log_to_memory(query, route, consensus, quality)
 
             return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
+        except RunTimeoutError as exc:
+            error_msg = f"run interrupted by timeout"
+            self.store.fail_run(run_id, error_msg)
+            audit.log("run.timeout", {"error": str(exc), "elapsed": time.time() - self._run_start_time})
+            raise
         except Exception as exc:
             self.store.fail_run(run_id, str(exc))
             audit.log("run.failed", {"error": str(exc)})
@@ -206,6 +232,7 @@ class ConclavePipeline:
         finally:
             self._audit = None
             self._run_id = None
+            self._run_start_time = 0.0
             self._context_char_limit = None
             # Close MCP connections
             try:
@@ -787,6 +814,18 @@ class ConclavePipeline:
         model_conf = self._extract_confidence(summary)
         auto_conf = self._auto_confidence(quality)
         final_conf = self._merge_confidence(model_conf, auto_conf)
+        # Build models_used from route plan
+        models_used = {}
+        plan_details = route.get("plan_details", {})
+        for role, info in plan_details.items():
+            if isinstance(info, dict) and info.get("id"):
+                models_used[role] = {
+                    "id": info["id"],
+                    "label": info.get("label", info["id"]),
+                }
+            elif isinstance(info, str):
+                models_used[role] = {"id": info, "label": self._model_label(info)}
+
         return {
             "answer": summary.strip(),
             "confidence": final_conf,
@@ -795,6 +834,7 @@ class ConclavePipeline:
             "pope": summary.strip().splitlines()[0] if summary.strip() else "",
             "fallback_used": fallback_used,
             "insufficient_evidence": False,
+            "models_used": models_used,
         }
 
     def _call_model(self, model_id: Optional[str], prompt: str, role: Optional[str] = None) -> str:

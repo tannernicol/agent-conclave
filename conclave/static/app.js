@@ -33,6 +33,7 @@ let currentPromptId = null;
 let collectionsLoaded = false;
 let runActionTimer = null;
 let runListTimer = null;
+let runWebSocket = null;
 
 // Utilities
 async function fetchJSON(url, options) {
@@ -1012,6 +1013,68 @@ async function startRun(query) {
 }
 
 async function pollRun(runId) {
+  // Clean up existing connections
+  if (pollTimer) clearInterval(pollTimer);
+  if (runWebSocket) {
+    runWebSocket.close();
+    runWebSocket = null;
+  }
+
+  // Try WebSocket first for real-time updates
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/run/${runId}`;
+
+  try {
+    runWebSocket = new WebSocket(wsUrl);
+
+    runWebSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'state' || data.type === 'complete') {
+          const run = data.run;
+          if (run.status === 'complete') {
+            setSmoke(true);
+            setStatus('Complete', 'success');
+            renderLatest(run);
+            refresh();
+            setRunActionEphemeral('Run complete', 'Latest Decision updated.', 'success');
+            runWebSocket?.close();
+          } else if (run.status === 'failed') {
+            setStatus('Failed', 'error');
+            renderLatest(run);
+            refresh();
+            setRunActionEphemeral('Run failed', run.error || 'See process logs for details.', 'error', 5000);
+            runWebSocket?.close();
+          } else {
+            renderLatest(run);
+          }
+        } else if (data.type === 'event') {
+          // Update progress display with new event
+          console.log('Run event:', data.event);
+        }
+      } catch (err) {
+        console.error('WebSocket message error:', err);
+      }
+    };
+
+    runWebSocket.onerror = () => {
+      console.log('WebSocket error, falling back to polling');
+      runWebSocket = null;
+      startPolling(runId);
+    };
+
+    runWebSocket.onclose = () => {
+      runWebSocket = null;
+    };
+
+  } catch (err) {
+    console.log('WebSocket failed, using polling:', err);
+    startPolling(runId);
+  }
+}
+
+function startPolling(runId) {
   if (pollTimer) clearInterval(pollTimer);
 
   pollTimer = setInterval(async () => {

@@ -190,16 +190,32 @@ rag:
   collection_reliability:
     tax-rag: high
     tax-data: high
+    tax-api: high
     health-rag: high
     health-data: high
+    health-dashboard: high
+    health-mcp: high
     money-api: high
+    money-mcp: high
     bounty-rag: high
     bugbounty-rag: high
+    bounty-mcp: high
+    bounty-context: high
+    bounty-handoff: high
     smart-contracts: high
     security-library: medium
     web-security: medium
     crypto-security: medium
     survival-library: medium
+  enforce_allowlist: true
+  domain_allowlist:
+    tax: [tax-rag, tax-data, tax-api]
+    health: [health-rag, health-data, health-dashboard, health-mcp]
+    money: [money-mcp, money-api]
+    bounty: [bounty-rag, bugbounty-rag, smart-contracts, security-library, web-security, crypto-security, bounty-mcp, bounty-context, bounty-handoff]
+    security: [security-library, web-security, smart-contracts, crypto-security]
+    agriculture: [survival-library, notes]
+    general: [notes]
   default_collections:
     - notes
   domain_collections:
@@ -228,6 +244,50 @@ rag:
       - "tax"
       - "irs"
       - "finance"
+
+verification:
+  enabled: true
+  on_demand:
+    health:
+      - type: http
+        url: http://127.0.0.1:8094/my-health.html
+        title: Health dashboard - my health
+        collection: health-dashboard
+        format: html
+      - type: http
+        url: http://127.0.0.1:8094/recommendations.html
+        title: Health dashboard - recommendations
+        collection: health-dashboard
+        format: html
+    money:
+      - type: mcp
+        server: money
+        tool: money_summary
+        title: Financial summary (MCP)
+        collection: money-mcp
+      - type: mcp
+        server: money
+        tool: money_spending
+        title: Current spending (MCP)
+        collection: money-mcp
+    tax:
+      - type: http
+        url: http://127.0.0.1:8097/api/summary
+        title: Tax summary (API)
+        collection: tax-api
+        format: json
+        optional: true
+  mcp_health_checks:
+    money:
+      tool: money_summary
+      arguments: {}
+    sqlite:
+      tool: sqlite_schema
+      arguments:
+        database: money
+    memory:
+      tool: memory_today
+      arguments: {}
     money:
       - "money"
       - "finance"

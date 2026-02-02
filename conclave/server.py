@@ -1,12 +1,14 @@
 """FastAPI server for Conclave."""
 from __future__ import annotations
 
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, Set
+import asyncio
 import re
 import json
 
@@ -16,6 +18,36 @@ from conclave.store import DecisionStore
 from conclave.models.registry import ModelRegistry
 
 app = FastAPI(title="Conclave")
+
+# WebSocket connection manager for real-time updates
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {}  # run_id -> set of websockets
+
+    async def connect(self, websocket: WebSocket, run_id: str):
+        await websocket.accept()
+        if run_id not in self.active_connections:
+            self.active_connections[run_id] = set()
+        self.active_connections[run_id].add(websocket)
+
+    def disconnect(self, websocket: WebSocket, run_id: str):
+        if run_id in self.active_connections:
+            self.active_connections[run_id].discard(websocket)
+            if not self.active_connections[run_id]:
+                del self.active_connections[run_id]
+
+    async def broadcast(self, run_id: str, message: dict):
+        if run_id in self.active_connections:
+            dead_connections = set()
+            for connection in self.active_connections[run_id]:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    dead_connections.add(connection)
+            for conn in dead_connections:
+                self.active_connections[run_id].discard(conn)
+
+ws_manager = ConnectionManager()
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -91,6 +123,50 @@ def _startup() -> None:
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return TEMPLATES.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint for monitoring."""
+    return {"status": "healthy", "service": "conclave"}
+
+
+@app.websocket("/ws/run/{run_id}")
+async def websocket_run(websocket: WebSocket, run_id: str):
+    """WebSocket endpoint for real-time run progress updates."""
+    await ws_manager.connect(websocket, run_id)
+    try:
+        # Send current state immediately
+        store = websocket.app.state.store
+        run = store.get_run(run_id)
+        if run:
+            await websocket.send_json({"type": "state", "run": run})
+
+        # Keep connection alive and watch for updates
+        last_event_count = len(run.get("events", [])) if run else 0
+        while True:
+            await asyncio.sleep(0.5)  # Poll every 500ms
+            run = store.get_run(run_id)
+            if not run:
+                break
+
+            current_event_count = len(run.get("events", []))
+            if current_event_count > last_event_count:
+                # Send new events
+                new_events = run["events"][last_event_count:]
+                for event in new_events:
+                    await websocket.send_json({"type": "event", "event": event})
+                last_event_count = current_event_count
+
+            # Check if run is complete
+            if run.get("status") in ("complete", "failed"):
+                await websocket.send_json({"type": "complete", "run": run})
+                break
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        ws_manager.disconnect(websocket, run_id)
 
 
 @app.get("/api/status")
