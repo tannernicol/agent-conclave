@@ -22,6 +22,7 @@ from conclave.audit import AuditLog
 from conclave.mcp import load_mcp_servers
 from conclave.mcp_bridge import MCPBridge
 from conclave.sources import HealthDashboardClient, MoneyClient
+from conclave.verification import OnDemandFetcher
 
 
 class RunTimeoutError(Exception):
@@ -61,6 +62,7 @@ class ConclavePipeline:
         )
         self.store = DecisionStore(config.data_dir)
         self.mcp = MCPBridge(config_path=config.mcp_config_path)
+        self.verifier = OnDemandFetcher(config, self.mcp, self.rag)
         self._audit: AuditLog | None = None
         self._run_id: str | None = None
         self._run_start_time: float = 0.0
@@ -346,13 +348,19 @@ class ConclavePipeline:
                 if item not in base:
                     base.append(item)
             required_collections = list(tax_collections)
-        selected, catalog = self._expand_collections(domain, base, explicit=bool(collections))
+        allowlist = self.config.rag.get("domain_allowlist", {}).get(domain, [])
+        selected, catalog = self._expand_collections(domain, base, explicit=bool(collections), allowlist=allowlist)
+        if allowlist and (self.config.rag.get("enforce_allowlist", True) or not collections):
+            filtered = [item for item in selected if item in allowlist]
+            if filtered:
+                selected = filtered
         roles = ["router", "reasoner", "critic", "summarizer"]
         plan_with_rationale = self.planner.plan_with_rationale(roles, self.registry.list_models())
         return {
             "domain": domain,
             "collections": selected,
             "required_collections": required_collections,
+            "allowlist": allowlist,
             "roles": roles,
             "plan": plan_with_rationale["assignments"],
             "rationale": plan_with_rationale["rationale"],
@@ -365,9 +373,14 @@ class ConclavePipeline:
         max_per_collection = int(rag_cfg.get("max_results_per_collection", 8))
         prefer_non_pdf = bool(rag_cfg.get("prefer_non_pdf", False))
         semantic = rag_cfg.get("semantic")
-        for coll in route.get("collections", []):
-            rag_results.extend(self.rag.search(query, collection=coll, limit=max_per_collection, semantic=semantic))
+        disable_domains = set(rag_cfg.get("disable_domains", []) or [])
+        if route.get("domain") not in disable_domains:
+            for coll in route.get("collections", []):
+                rag_results.extend(self.rag.search(query, collection=coll, limit=max_per_collection, semantic=semantic))
         rag_results = self._filter_rag_results(rag_results)
+        allowlist = route.get("allowlist") or []
+        if allowlist:
+            rag_results = [item for item in rag_results if item.get("collection") in allowlist]
         nas_results = []
         file_results = self.rag.search_files(query, limit=10)
         if self.config.index.get("enabled", True):
@@ -390,12 +403,25 @@ class ConclavePipeline:
         source_items: List[Dict[str, Any]] = []
         source_errors: List[Dict[str, Any]] = []
         mcp_results: Dict[str, Any] = {}
+        domain = route.get("domain")
 
-        if route.get("domain") == "health":
+        on_demand = self.verifier.fetch(domain or "general", query)
+        if on_demand.items:
+            source_items.extend(on_demand.items)
+        if on_demand.errors:
+            source_errors.extend(on_demand.errors)
+        if self._audit and (on_demand.items or on_demand.errors):
+            self._audit.log("sources.on_demand", {
+                "domain": domain,
+                "items": len(on_demand.items),
+                "errors": on_demand.errors,
+            })
+
+        if domain == "health" and not self.verifier.has_tasks("health"):
             source_items.extend(self.health_source.fetch())
             source_errors.extend(self.health_source.drain_errors())
 
-        if route.get("domain") == "money":
+        if domain == "money" and not self.verifier.has_tasks("money"):
             # Try MCP first, fallback to direct HTTP
             mcp_summary = self.mcp.money_summary()
             mcp_spending = self.mcp.money_spending()
@@ -426,7 +452,7 @@ class ConclavePipeline:
             elif not mcp_spending.ok:
                 source_errors.append({"action": "mcp:money_spending", "error": mcp_spending.error})
 
-        if route.get("domain") == "bounty":
+        if domain == "bounty":
             # Query bounty-training MCP for relevant patterns and techniques
             bounty_rag = self.mcp.bounty_rag_query(query, limit=5)
             if bounty_rag.ok and bounty_rag.result:
@@ -451,7 +477,7 @@ class ConclavePipeline:
                     "source": "mcp",
                 })
 
-        if route.get("domain") == "bounty" and user_inputs:
+        if domain == "bounty" and user_inputs:
             instructions = user_inputs[0].get("full_text") or ""
             extra_queries = self._extract_focus_queries(str(instructions))
             for query_term in extra_queries:
@@ -527,6 +553,10 @@ class ConclavePipeline:
             stats["rag_errors"] = rag_errors
         if source_errors:
             stats["source_errors"] = source_errors
+        if on_demand.items:
+            stats["on_demand_count"] = len(on_demand.items)
+        if on_demand.errors:
+            stats["on_demand_errors"] = on_demand.errors
         if user_inputs:
             stats["input_path"] = user_inputs[0].get("path")
         return {
@@ -1907,7 +1937,13 @@ class ConclavePipeline:
             "insufficient": bool(issues and ("insufficient_evidence" in issues or "low_signal" in issues or "low_relevance" in issues)),
         }
 
-    def _expand_collections(self, domain: str, base: List[str], explicit: bool = False) -> tuple[List[str], Dict[str, Any]]:
+    def _expand_collections(
+        self,
+        domain: str,
+        base: List[str],
+        explicit: bool = False,
+        allowlist: List[str] | None = None,
+    ) -> tuple[List[str], Dict[str, Any]]:
         rag_cfg = self.config.rag
         use_server = bool(rag_cfg.get("use_server_collections", True))
         skip_empty = bool(rag_cfg.get("skip_empty_collections", True))
@@ -1925,6 +1961,8 @@ class ConclavePipeline:
             if skip_empty and not item.get("exists"):
                 continue
             if skip_empty and item.get("file_count", 0) == 0:
+                continue
+            if allowlist and name not in allowlist:
                 continue
             available[name] = item
         selected = list(dict.fromkeys([c for c in base if c in available or not skip_empty]))

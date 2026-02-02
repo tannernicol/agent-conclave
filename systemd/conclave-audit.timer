@@ -1,0 +1,9 @@
+[Unit]
+Description=Conclave audit weekly timer
+
+[Timer]
+OnCalendar=Sun *-*-* 05:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

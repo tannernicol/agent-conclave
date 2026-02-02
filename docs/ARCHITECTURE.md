@@ -80,6 +80,11 @@ conclave/
   - settlement and reconciliation
   - quality checks and evidence statistics
 
+## Quality & verification
+- **On-demand source fetch** for trusted data (MCP + local HTTP) before RAG retrieval.
+- **RAG/MCP audits** write to `~/.conclave/audits` and run weekly via `conclave-audit.timer`.
+- **Domain allowlists** keep evidence focused on trusted collections.
+
 ## Security & privacy
 - Local-first inference, no paid API tokens by default
 - Claude/Codex via CLI login (no API key required)

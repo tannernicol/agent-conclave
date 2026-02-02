@@ -223,6 +223,31 @@ def cmd_index(args: argparse.Namespace) -> None:
     _print({"indexed": indexed})
 
 
+def cmd_audit(args: argparse.Namespace) -> None:
+    config = get_config()
+    from conclave.quality_audit import run_audit
+    output_dir = Path(args.output_dir) if args.output_dir else (config.data_dir / "audits")
+    result = run_audit(
+        config,
+        mode=args.mode,
+        output_dir=output_dir,
+        fetch_sources=not args.no_fetch,
+    )
+    _print({"ok": True, "audit": result.payload, "json": str(result.json_path), "md": str(result.md_path)})
+    if args.fail_on_issues:
+        rag = result.payload.get("rag") or {}
+        mcp = result.payload.get("mcp") or {}
+        issues = 0
+        issues += len(rag.get("collections_empty") or [])
+        issues += len(rag.get("missing_reliability") or [])
+        issues += len(rag.get("allowlist_missing") or {})
+        for check in (mcp.get("checks") or []):
+            if check.get("ok") is False:
+                issues += 1
+        if issues:
+            raise SystemExit(2)
+
+
 def cmd_schedule(args: argparse.Namespace) -> None:
     config = get_config()
     if args.schedule_cmd == "list":
@@ -318,6 +343,12 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--no-fail-on-insufficient", action="store_true")
 
     sub.add_parser("index")
+
+    audit = sub.add_parser("audit")
+    audit.add_argument("--mode", choices=["all", "rag", "mcp", "sources"], default="all")
+    audit.add_argument("--output-dir")
+    audit.add_argument("--no-fetch", action="store_true")
+    audit.add_argument("--fail-on-issues", action="store_true")
 
     schedule = sub.add_parser("schedule")
     schedule_sub = schedule.add_subparsers(dest="schedule_cmd")
@@ -456,6 +487,8 @@ def main() -> None:
         cmd_reconcile(args)
     elif args.command == "index":
         cmd_index(args)
+    elif args.command == "audit":
+        cmd_audit(args)
     elif args.command == "schedule":
         cmd_schedule(args)
     else:
