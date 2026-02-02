@@ -730,11 +730,12 @@ class ConclavePipeline:
                 "If you cannot cite file paths with line numbers from evidence, say \"INSUFFICIENT EVIDENCE\" and list what code files are needed.\n"
             )
         summary_prompt = (
-            "You are the summarizer. Produce a final consensus answer with bullet points."
+            "You are the summarizer. Produce a consensus answer with bullet points."
             " Be prescriptive and actionable. Do not mention model limitations."
             " If evidence is weak, proceed with best-effort assumptions and mark confidence low instead of refusing."
             " Include an Evidence section listing the top sources (file paths or collection names)."
-            " Include Risks/Uncertainties and Follow-ups. Include a confidence level (low/medium/high).\n\n"
+            " Include Risks/Uncertainties and Follow-ups. Include a confidence level (low/medium/high)."
+            " Do not include a heading that says \"Final Consensus Answer\".\n\n"
             f"Question: {query}\n\nContext:\n{context_blob}\n\n"
             f"Evidence quality: {evidence_hint}\n\n"
             f"{domain_instructions}\n"
@@ -947,7 +948,7 @@ class ConclavePipeline:
         critic = deliberation.get("critic", "")
         reasoner = deliberation.get("reasoner", "")
         lines = [
-            "**Fallback Consensus Answer:**",
+            "**Consensus:**",
             "",
             f"- **Query**: {query}",
             "",
@@ -1422,3 +1423,43 @@ class ConclavePipeline:
             age_seconds = time.time() - db_path.stat().st_mtime
             if age_seconds > auto_refresh_days * 24 * 3600:
                 self.index.index()
+
+    def _log_to_memory(self, query: str, route: Dict[str, Any], consensus: Dict[str, Any], quality: Dict[str, Any]) -> None:
+        """Log run outcome to memory MCP for cross-session learning."""
+        try:
+            domain = route.get("domain", "general")
+            confidence = consensus.get("confidence", "medium")
+            insufficient = consensus.get("insufficient_evidence", False)
+
+            # Build learning summary
+            if insufficient:
+                learning = f"Query '{query[:80]}' failed with insufficient evidence in {domain} domain"
+                importance = "low"
+            elif confidence == "high":
+                learning = f"High-confidence answer for '{query[:80]}' in {domain} domain"
+                importance = "medium"
+            else:
+                learning = f"Answered '{query[:80]}' in {domain} domain with {confidence} confidence"
+                importance = "low"
+
+            # Include quality metrics as context
+            context = f"evidence={quality.get('evidence_count', 0)}, signal={quality.get('max_signal_score', 0):.2f}"
+            if quality.get("issues"):
+                context += f", issues={','.join(quality.get('issues', []))}"
+
+            # Log to memory MCP (async, don't wait for result)
+            self.mcp.memory_learn(
+                category=domain if domain != "general" else "conclave",
+                learning=learning,
+                context=context,
+                importance=importance,
+            )
+
+            # Log action to today's thread
+            result = "insufficient" if insufficient else f"{confidence} confidence"
+            self.mcp.memory_log_action(
+                action=f"conclave: {domain} query",
+                result=result,
+            )
+        except Exception as e:
+            self.logger.debug(f"Memory logging failed: {e}")
