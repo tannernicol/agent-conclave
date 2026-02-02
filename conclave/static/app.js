@@ -422,6 +422,61 @@ function renderBountySummary(run) {
   `;
 }
 
+function renderBountyAssets(run) {
+  const assets = run?.artifacts?.bounty_assets;
+  if (!assets) return '';
+  const sections = [];
+  const target = assets.target?.id || assets.target?.name;
+  if (target) {
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Target</div>
+        <div class="bounty-section-body">${escapeHtml(target)}</div>
+      </div>
+    `);
+  }
+  if (assets.submission_reports?.length) {
+    const items = assets.submission_reports.slice(0, 6)
+      .map((p) => `<li><code>${escapeHtml(p)}</code></li>`).join('');
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Submission-Ready Reports</div>
+        <div class="bounty-section-body"><ul>${items}</ul></div>
+      </div>
+    `);
+  }
+  if (assets.working_reports?.length) {
+    const items = assets.working_reports.slice(0, 6)
+      .map((p) => `<li><code>${escapeHtml(p)}</code></li>`).join('');
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Working Reports (Detailed)</div>
+        <div class="bounty-section-body"><ul>${items}</ul></div>
+      </div>
+    `);
+  }
+  if (assets.locations?.length) {
+    const items = assets.locations.slice(0, 8).map((loc) => {
+      const prefix = loc.finding ? `${escapeHtml(loc.finding)} ` : '';
+      const path = loc.path ? `${escapeHtml(loc.path)}${loc.lines ? ':' + escapeHtml(loc.lines) : ''}` : '';
+      return `<li><code>${prefix}${path}</code></li>`;
+    }).join('');
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Vulnerable Code Locations</div>
+        <div class="bounty-section-body"><ul>${items}</ul></div>
+      </div>
+    `);
+  }
+  if (!sections.length) return '';
+  return `
+    <div class="bounty-summary bounty-assets">
+      <div class="bounty-title">Bounty Files</div>
+      ${sections.join('')}
+    </div>
+  `;
+}
+
 // Pipeline progress
 function buildPhaseState(run) {
   const phases = [
@@ -675,6 +730,7 @@ function renderRuns(runs) {
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
     const progressHtml = status === 'running' ? renderRunProgress(run) : '';
     const bountySummary = renderBountySummary(run);
+    const bountyAssets = renderBountyAssets(run);
 
     return `
       <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}" data-run-output="${escapeHtml(outputType)}">
@@ -687,6 +743,7 @@ function renderRuns(runs) {
           <div class="run-card-query">${escapeHtml(run.query || '')}</div>
           ${progressHtml}
           ${bountySummary}
+          ${bountyAssets}
           ${outputHtml}
           <details class="run-card-expand">
             <summary>View full details</summary>
@@ -712,6 +769,16 @@ function renderRunDetail(run) {
   const events = run.events || [];
   const lastEvents = events.slice(-6);
   const outputType = run.meta?.output_type;
+  const modelEvents = events.filter((event) => event.phase === 'model' && event.role);
+  const roleMap = {};
+  modelEvents.forEach((event) => {
+    if (!roleMap[event.role]) {
+      roleMap[event.role] = event.model_label || event.model_id;
+    }
+  });
+  const modelItems = Object.entries(roleMap).map(([role, model]) => {
+    return `<li>${escapeHtml(role)} → ${escapeHtml(model || 'unknown')}</li>`;
+  }).join('');
 
   const logItems = lastEvents.map((event) => {
     const time = event.timestamp ? formatTimeShort(event.timestamp) : '';
@@ -741,6 +808,12 @@ function renderRunDetail(run) {
     <div class="log-section">
       <div class="log-section-title">Run Meta</div>
       <ul class="log-list">${metaItems.join('')}</ul>
+    </div>
+    ` : ''}
+    ${modelItems ? `
+    <div class="log-section">
+      <div class="log-section-title">Models</div>
+      <ul class="log-list">${modelItems}</ul>
     </div>
     ` : ''}
     <div class="log-section">

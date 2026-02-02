@@ -54,6 +54,12 @@ conclave/
 - **User inputs** stored as Markdown in `~/.conclave/inputs` and treated as high-signal evidence
 - **Health dashboard** pages (health.tannner.com) and **Money API** (money.tannner.com) can be ingested as evidence
 
+## Bounty integration
+- Pulls target context from `bug-bounty-recon` (handoff files, reports, hunt-state)
+- Adds submission-ready and working reports to evidence for bounty runs
+- Exports bounty run summaries into `bug-bounty-recon/findings` for bounty.tannner.com
+- Writes per-target Conclave run Markdown to `targets/<target>/conclave-runs/`
+
 ### RAG discovery
 - Pulls collection catalog from rag.tannner.com
 - Filters empty collections

@@ -4,9 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from datetime import datetime
 import time
 import logging
 import fnmatch
+import json
+import re
 
 from conclave.config import Config
 from conclave.models.registry import ModelRegistry
@@ -176,6 +179,16 @@ class ConclavePipeline:
                 "quality": quality,
                 "reconcile": reconcile,
             }
+            if route.get("domain") == "bounty":
+                bounty_assets = context.get("bounty_assets") or {}
+                if bounty_assets:
+                    artifacts["bounty_assets"] = bounty_assets
+                try:
+                    export_info = self._export_bounty_run(run_id, query, consensus, bounty_assets or None)
+                    if export_info:
+                        artifacts["bounty_export"] = export_info
+                except Exception as exc:
+                    audit.log("bounty.export.failed", {"error": str(exc)})
             self.store.finalize_run(run_id, consensus, artifacts)
             audit.log("settlement.complete", {
                 "consensus": consensus,
@@ -455,6 +468,14 @@ class ConclavePipeline:
                     "collection": "bounty-artifact",
                     "source": "bounty-artifact",
                 })
+        bounty_assets: Dict[str, Any] | None = None
+        if route.get("domain") == "bounty":
+            instructions = ""
+            if user_inputs:
+                instructions = str(user_inputs[0].get("full_text") or "")
+            bounty_assets = self._collect_bounty_assets(query, instructions)
+            if bounty_assets:
+                source_items.extend(bounty_assets.get("source_items", []))
         evidence_limit = None
         if meta and meta.get("evidence_limit"):
             try:
@@ -488,6 +509,7 @@ class ConclavePipeline:
             "evidence": evidence,
             "stats": stats,
             "user_inputs": user_inputs,
+            "bounty_assets": bounty_assets,
         }
 
     def _extract_focus_queries(self, instructions: str) -> list[str]:
@@ -496,7 +518,7 @@ class ConclavePipeline:
         import re
         from pathlib import Path
         queries: list[str] = []
-        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\\.rs", instructions)
+        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\.rs", instructions)
         for path in paths:
             queries.append(path)
             queries.append(Path(path).name)
@@ -534,7 +556,7 @@ class ConclavePipeline:
         if not instructions:
             return []
         import re
-        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\\.rs", instructions)
+        paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\.rs", instructions)
         unique = []
         seen = set()
         for path in paths:
@@ -624,8 +646,14 @@ class ConclavePipeline:
         output_instructions = self._output_instructions(context.get("output_type"))
         if domain == "bounty":
             domain_instructions = (
-                "For bounty analysis, only propose findings that are supported by evidence snippets.\n"
-                "You must cite file paths and line numbers. If you cannot, say \"INSUFFICIENT EVIDENCE\".\n"
+                "For bounty analysis, produce a concise hunt brief with sections:\n"
+                "- Summary (<=6 bullets)\n"
+                "- Existing Bug Reports / Internal Findings\n"
+                "- Submission-Ready Reports\n"
+                "- Working Reports (Detailed)\n"
+                "- Vulnerable Code Locations (file:line)\n"
+                "- Next Hunt Targets / Open Questions\n"
+                "Cite file paths and line numbers when available. If code context is missing, state assumptions and list needed files.\n"
             )
         elif domain == "agriculture":
             domain_instructions = (
@@ -730,14 +758,11 @@ class ConclavePipeline:
         domain_instructions = ""
         if domain == "bounty":
             domain_instructions = (
-                "For bounty output, follow this format for each finding:\n"
-                "- Location (file:line)\n"
-                "- Root cause\n"
-                "- Attack scenario\n"
-                "- Severity assessment\n"
-                "- Why it's not a false positive\n"
-                "Only list findings that are directly supported by the provided evidence and cite file paths.\n"
-                "If you cannot cite file paths with line numbers from evidence, say \"INSUFFICIENT EVIDENCE\" and list what code files are needed.\n"
+                "For bounty output, produce a concise hunt brief with sections:\n"
+                "Summary, Existing Bug Reports / Internal Findings, Submission-Ready Reports, Working Reports (Detailed),\n"
+                "Vulnerable Code Locations, Next Hunt Targets / Open Questions.\n"
+                "If you list a finding, include: Location (file:line), Root cause, Attack scenario, Severity, Why not false positive.\n"
+                "Cite file paths and line numbers when available. If missing, list required files instead of refusing.\n"
             )
         summary_prompt = (
             "You are the summarizer. Produce a consensus answer with bullet points."
@@ -1159,6 +1184,239 @@ class ConclavePipeline:
                 return str(full_text).strip()
         return ""
 
+    def _bounty_config(self) -> Dict[str, Any]:
+        cfg = self.config.raw.get("bounty_integration", {}) or {}
+        base_dir = Path(cfg.get("base_dir", "/home/tanner/bug-bounty-recon"))
+        def _path(key: str, fallback: Path) -> Path:
+            value = cfg.get(key)
+            return Path(value) if value else fallback
+        def _int(key: str, fallback: int) -> int:
+            try:
+                return int(cfg.get(key, fallback))
+            except Exception:
+                return fallback
+        return {
+            "enabled": bool(cfg.get("enabled", True)),
+            "base_dir": base_dir,
+            "targets_dir": _path("targets_dir", base_dir / "targets"),
+            "submissions_dir": _path("submissions_dir", base_dir / "submissions"),
+            "findings_dir": _path("findings_dir", base_dir / "findings"),
+            "hunt_state_path": _path("hunt_state_path", base_dir / "hunt-state.json"),
+            "run_dir_name": str(cfg.get("run_dir_name", "conclave-runs")),
+            "export_runs": bool(cfg.get("export_runs", True)),
+            "export_markdown": bool(cfg.get("export_markdown", True)),
+            "max_reports": _int("max_reports", 12),
+            "max_locations": _int("max_locations", 12),
+        }
+
+    def _load_hunt_state(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _infer_target_dir_from_path(self, path: Path, targets_dir: Path) -> Path | None:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+        parts = list(resolved.parts)
+        if "targets" in parts:
+            idx = parts.index("targets")
+            if len(parts) > idx + 1:
+                return Path(*parts[: idx + 2])
+        if targets_dir in resolved.parents:
+            try:
+                relative = resolved.relative_to(targets_dir)
+            except Exception:
+                relative = None
+            if relative:
+                target_name = relative.parts[0]
+                return targets_dir / target_name
+        return None
+
+    def _detect_bounty_target(
+        self,
+        query: str,
+        instructions: str,
+        artifact_paths: List[str],
+        cfg: Dict[str, Any],
+        hunt_state: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        target_dir: Path | None = None
+        match = re.search(r"/bug-bounty-recon/targets/([^/\\s]+)", instructions or "")
+        if match:
+            target_dir = cfg["targets_dir"] / match.group(1)
+        if not target_dir:
+            for raw in artifact_paths:
+                candidate = self._infer_target_dir_from_path(Path(raw), cfg["targets_dir"])
+                if candidate:
+                    target_dir = candidate
+                    break
+        target_id = None
+        target_data = None
+        if hunt_state:
+            if target_dir:
+                for tid, data in hunt_state.get("targets", {}).items():
+                    repo = data.get("repo")
+                    if repo and Path(repo).resolve() == target_dir.resolve():
+                        target_id = tid
+                        target_data = data
+                        break
+            if not target_id:
+                q = (query or "").lower()
+                for tid, data in hunt_state.get("targets", {}).items():
+                    repo = data.get("repo") or ""
+                    repo_name = Path(repo).name.lower() if repo else ""
+                    if tid.lower() in q or (repo_name and repo_name in q):
+                        target_id = tid
+                        target_data = data
+                        if repo:
+                            target_dir = Path(repo)
+                        break
+            if not target_id:
+                pipeline_targets = hunt_state.get("strategy", {}).get("targets_pipeline") or []
+                if pipeline_targets:
+                    target_id = pipeline_targets[0]
+                    target_data = hunt_state.get("targets", {}).get(target_id, {})
+                    repo = target_data.get("repo")
+                    if repo:
+                        target_dir = Path(repo)
+        if not target_dir and not target_id:
+            return None
+        target_name = target_dir.name if target_dir else (target_id or "unknown")
+        target = {
+            "id": target_id or target_name,
+            "name": target_name,
+            "repo": str(target_dir) if target_dir else None,
+        }
+        if isinstance(target_data, dict):
+            for key in ["platform", "bounty", "status", "scope", "contest_start", "contest_end", "live_tvl"]:
+                if key in target_data and target_data.get(key) is not None:
+                    target[key] = target_data.get(key)
+            target["potential_leads"] = target_data.get("potential_leads", [])
+            target["learnings"] = target_data.get("learnings", [])
+            target["next_vectors"] = target_data.get("next_vectors", [])
+        return target
+
+    def _extract_locations_from_text(self, text: str, max_locations: int) -> List[Dict[str, str]]:
+        if not text:
+            return []
+        locations: List[Dict[str, str]] = []
+        for match in re.finditer(r"([A-Za-z0-9_./-]+\.rs):(\d+(?:-\d+)?)", text):
+            locations.append({"path": match.group(1), "lines": match.group(2)})
+            if len(locations) >= max_locations:
+                return locations
+        for line in text.splitlines():
+            if "|" not in line or ".rs" not in line:
+                continue
+            parts = [p.strip() for p in line.strip("|").split("|")]
+            if len(parts) >= 3 and ".rs" in parts[1]:
+                locations.append({"finding": parts[0], "path": parts[1], "lines": parts[2]})
+                if len(locations) >= max_locations:
+                    break
+        return locations[:max_locations]
+
+    def _collect_bounty_assets(self, query: str, instructions: str) -> Dict[str, Any] | None:
+        cfg = self._bounty_config()
+        if not cfg.get("enabled"):
+            return None
+        artifact_paths = self._extract_artifact_paths(instructions or "")
+        hunt_state = self._load_hunt_state(cfg["hunt_state_path"])
+        target = self._detect_bounty_target(query, instructions, artifact_paths, cfg, hunt_state)
+        if not target:
+            return None
+        target_dir = Path(target.get("repo")) if target.get("repo") else None
+        target_tokens = {str(target.get("id", "")).lower(), str(target.get("name", "")).lower()}
+        target_tokens = {t for t in target_tokens if t}
+        if target.get("id") and str(target["id"]).endswith("-c4"):
+            target_tokens.add(str(target["id"]).replace("-c4", ""))
+        submission_reports: List[str] = []
+        submissions_dir = cfg["submissions_dir"]
+        if submissions_dir.exists() and target_tokens:
+            files = []
+            for path in submissions_dir.rglob("*.md"):
+                lower = str(path).lower()
+                if any(token in lower for token in target_tokens):
+                    files.append(path)
+            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            submission_reports = [str(p) for p in files[: cfg["max_reports"]]]
+
+        working_reports: List[str] = []
+        if target_dir:
+            reports_dir = target_dir / "reports"
+            if reports_dir.exists():
+                report_files = sorted(reports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+                working_reports = [str(p) for p in report_files[: cfg["max_reports"]]]
+
+        handoff_path = target_dir / "HUNT-HANDOFF.md" if target_dir else None
+        locations: List[Dict[str, str]] = []
+        handoff_excerpt = ""
+        if handoff_path and handoff_path.exists():
+            try:
+                content = handoff_path.read_text(errors="ignore")
+                handoff_excerpt = "\n".join(content.splitlines()[:120])
+                locations = self._extract_locations_from_text(content, cfg["max_locations"])
+            except Exception:
+                handoff_excerpt = ""
+        if not locations:
+            leads = target.get("potential_leads") or []
+            for lead in leads:
+                for file_loc in lead.get("files", []) if isinstance(lead, dict) else []:
+                    match = re.search(r"([A-Za-z0-9_./-]+\.rs):(\d+(?:-\d+)?)", str(file_loc))
+                    if match:
+                        locations.append({
+                            "finding": lead.get("id") if isinstance(lead, dict) else None,
+                            "path": match.group(1),
+                            "lines": match.group(2),
+                        })
+                if len(locations) >= cfg["max_locations"]:
+                    break
+        source_items: List[Dict[str, Any]] = []
+        summary_lines = []
+        summary_lines.append(f"Target: {target.get('id') or target.get('name')}")
+        if submission_reports:
+            summary_lines.append("Submission-Ready Reports:")
+            summary_lines.extend([f"- {Path(p).name} ({p})" for p in submission_reports[:6]])
+        if working_reports:
+            summary_lines.append("Working Reports (Detailed):")
+            summary_lines.extend([f"- {Path(p).name} ({p})" for p in working_reports[:6]])
+        if locations:
+            summary_lines.append("Vulnerable Code Locations:")
+            for loc in locations[: cfg["max_locations"]]:
+                finding = loc.get("finding")
+                path = loc.get("path")
+                lines = loc.get("lines")
+                label = f"{finding} " if finding else ""
+                if path:
+                    summary_lines.append(f"- {label}{path}:{lines}" if lines else f"- {label}{path}")
+        summary_snippet = "\n".join(summary_lines)[:1600]
+        if summary_snippet:
+            source_items.append({
+                "path": str(cfg["hunt_state_path"]),
+                "title": f"Bounty context ({target.get('id')})",
+                "snippet": summary_snippet,
+                "collection": "bounty-context",
+            })
+        if handoff_excerpt and handoff_path:
+            source_items.append({
+                "path": str(handoff_path),
+                "title": "Hunt handoff",
+                "snippet": handoff_excerpt[:1600],
+                "collection": "bounty-handoff",
+            })
+        return {
+            "target": target,
+            "submission_reports": submission_reports,
+            "working_reports": working_reports,
+            "locations": locations,
+            "handoff_path": str(handoff_path) if handoff_path else None,
+            "source_items": source_items,
+        }
+
     def _validate_bounty_output(self, summary: str) -> tuple[bool, str]:
         if not summary.strip():
             return False, "empty output"
@@ -1166,12 +1424,147 @@ class ConclavePipeline:
         if "insufficient evidence" in lower:
             return False, "model reported insufficient evidence"
         import re
-        if "location" not in lower:
-            return False, "missing Location field"
-        path_line = re.search(r"(programs/|crates/|tests?/).+?:\\d+", summary)
-        if not path_line:
+        if "location" not in lower and "vulnerable code locations" not in lower:
+            return False, "missing location section"
+        path_line = re.search(r"[A-Za-z0-9_./-]+\.rs:\d+", summary)
+        if not path_line and "vulnerable code locations" in lower:
             return False, "missing file:line references"
         return True, ""
+
+    def _first_nonempty_line(self, text: str) -> str:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            return stripped
+        return text.strip().splitlines()[0] if text.strip() else ""
+
+    def _extract_bounty_meta(self, text: str) -> tuple[str, str]:
+        severity = "info"
+        bug_type = "analysis"
+        for line in text.splitlines():
+            lower = line.lower()
+            if "severity" in lower and ":" in line:
+                severity = line.split(":", 1)[1].strip() or severity
+            if "bug_type" in lower and ":" in line:
+                bug_type = line.split(":", 1)[1].strip() or bug_type
+            if severity != "info" and bug_type != "analysis":
+                break
+        return severity, bug_type
+
+    def _confidence_score(self, confidence: str | None) -> float:
+        if confidence == "high":
+            return 0.9
+        if confidence == "medium":
+            return 0.7
+        if confidence == "low":
+            return 0.5
+        return 0.6
+
+    def _render_bounty_markdown(self, query: str, consensus: Dict[str, Any], assets: Dict[str, Any]) -> str:
+        target = assets.get("target", {}) if assets else {}
+        lines = [
+            "# Conclave Bounty Run",
+            "",
+            f"- **Target**: {target.get('id') or target.get('name') or 'unknown'}",
+            f"- **Query**: {query}",
+            f"- **Confidence**: {consensus.get('confidence', 'unknown')}",
+            "",
+            "## Consensus",
+            "",
+            consensus.get("answer", "").strip() or "No consensus.",
+            "",
+        ]
+        submission_reports = assets.get("submission_reports") or []
+        working_reports = assets.get("working_reports") or []
+        locations = assets.get("locations") or []
+        if submission_reports:
+            lines.append("## Submission-Ready Reports")
+            lines.append("")
+            for path in submission_reports:
+                lines.append(f"- {path}")
+            lines.append("")
+        if working_reports:
+            lines.append("## Working Reports (Detailed)")
+            lines.append("")
+            for path in working_reports:
+                lines.append(f"- {path}")
+            lines.append("")
+        if locations:
+            lines.append("## Vulnerable Code Locations")
+            lines.append("")
+            for loc in locations:
+                path = loc.get("path")
+                linestr = loc.get("lines")
+                finding = loc.get("finding")
+                label = f"{finding} " if finding else ""
+                if path and linestr:
+                    lines.append(f"- {label}{path}:{linestr}")
+                elif path:
+                    lines.append(f"- {label}{path}")
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
+    def _export_bounty_run(
+        self,
+        run_id: str,
+        query: str,
+        consensus: Dict[str, Any],
+        assets: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        cfg = self._bounty_config()
+        if not cfg.get("enabled") or not cfg.get("export_runs"):
+            return None
+        findings_dir = cfg["findings_dir"]
+        findings_dir.mkdir(parents=True, exist_ok=True)
+        target = assets.get("target", {}) if assets else {}
+        target_id = target.get("id") or target.get("name") or "unknown"
+        summary = self._first_nonempty_line(consensus.get("answer", ""))
+        severity, bug_type = self._extract_bounty_meta(consensus.get("answer", ""))
+        score = self._confidence_score(consensus.get("confidence"))
+        response = (
+            f"BUG_TYPE: {bug_type}\n"
+            f"SEVERITY: {severity}\n"
+            f"SUMMARY: {summary}\n"
+            f"RUN_ID: {run_id}\n"
+            f"QUERY: {query}"
+        )
+        payload = {
+            "id": f"conclave-{run_id}",
+            "target": target_id,
+            "contract": target.get("repo"),
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "consensus": consensus.get("confidence") or "review",
+            "score": score,
+            "votes": {
+                "conclave": {
+                    "response": response,
+                    "score": score,
+                }
+            },
+            "query": query,
+            "run_id": run_id,
+            "submission_reports": assets.get("submission_reports") if assets else [],
+            "working_reports": assets.get("working_reports") if assets else [],
+        }
+        path = findings_dir / f"conclave_{run_id}.json"
+        path.write_text(json.dumps(payload, indent=2))
+        export_info = {"path": str(path)}
+        if cfg.get("export_markdown"):
+            target_repo = target.get("repo")
+            if target_repo:
+                md_dir = Path(target_repo) / cfg.get("run_dir_name", "conclave-runs")
+                md_dir.mkdir(parents=True, exist_ok=True)
+                md_body = self._render_bounty_markdown(query, consensus, assets or {})
+                md_path = md_dir / f"conclave-{run_id}.md"
+                md_latest = md_dir / "conclave-latest.md"
+                md_path.write_text(md_body)
+                md_latest.write_text(md_body)
+                export_info["markdown"] = str(md_path)
+                export_info["markdown_latest"] = str(md_latest)
+        return export_info
 
     def _score_item(
         self,

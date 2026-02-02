@@ -197,16 +197,20 @@ rag:
     health-rag: high
     health-data: high
     money-api: high
-    bounty-rag: medium
+    bounty-rag: high
+    bugbounty-rag: high
+    smart-contracts: high
     security-library: medium
+    web-security: medium
+    crypto-security: medium
     survival-library: medium
   default_collections:
     - notes
   domain_collections:
     tax: [tax-rag, tax-data, homelab-rag]
     health: [health-rag, health-data, homelab-rag]
-    bounty: [bounty-rag, bugbounty-rag, security-library]
-    security: [security-library, web-security]
+    bounty: [bounty-rag, bugbounty-rag, smart-contracts, security-library, web-security, crypto-security]
+    security: [security-library, web-security, smart-contracts]
     money: [homelab-rag, prompts]
     agriculture: [survival-library, notes]
   dynamic_patterns:
@@ -215,6 +219,11 @@ rag:
       - "security"
       - "smart"
       - "crypto"
+      - "solidity"
+      - "defi"
+      - "audit"
+      - "dex"
+      - "amm"
     health:
       - "health"
       - "medical"
@@ -336,6 +345,19 @@ quality:
       - /home/tanner/money/**
     agriculture:
       - /home/tanner/survival-library/**
+
+bounty_integration:
+  enabled: true
+  base_dir: /home/tanner/bug-bounty-recon
+  targets_dir: /home/tanner/bug-bounty-recon/targets
+  submissions_dir: /home/tanner/bug-bounty-recon/submissions
+  findings_dir: /home/tanner/bug-bounty-recon/findings
+  hunt_state_path: /home/tanner/bug-bounty-recon/hunt-state.json
+  run_dir_name: conclave-runs
+  export_runs: true
+  export_markdown: true
+  max_reports: 12
+  max_locations: 12
 
 sources:
   health_dashboard_url: http://127.0.0.1:8094
