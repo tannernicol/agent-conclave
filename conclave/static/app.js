@@ -316,6 +316,112 @@ function renderAnswerPreview(text) {
   return content.map(c => `<div class="answer-line">${c}</div>`).join('');
 }
 
+function normalizeHeading(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s/]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractSection(markdown, titles) {
+  if (!markdown) return '';
+  const wanted = new Set(titles.map(normalizeHeading));
+  const lines = markdown.split('\n');
+  let collecting = false;
+  const buffer = [];
+  for (const line of lines) {
+    const headingMatch = line.match(/^#{1,3}\s*(.+)$/);
+    const boldMatch = line.match(/^\*\*(.+)\*\*$/);
+    if (headingMatch || boldMatch) {
+      const headingText = headingMatch ? headingMatch[1] : boldMatch[1];
+      if (collecting) break;
+      collecting = wanted.has(normalizeHeading(headingText));
+      continue;
+    }
+    if (collecting) buffer.push(line);
+  }
+  return buffer.join('\n').trim();
+}
+
+function extractCodeBlock(markdown) {
+  if (!markdown) return '';
+  const match = markdown.match(/```(?:bash|sh)?\n([\s\S]*?)```/i);
+  return match ? match[1].trim() : '';
+}
+
+function extractBullets(markdown, pattern, maxItems = 3) {
+  if (!markdown) return [];
+  const lines = markdown.split('\n').map((line) => line.trim());
+  const items = [];
+  for (const line of lines) {
+    if (!line.startsWith('-')) continue;
+    if (!pattern.test(line)) continue;
+    items.push(line.replace(/^-+\s*/, '').trim());
+    if (items.length >= maxItems) break;
+  }
+  return items;
+}
+
+function renderBountySummary(run) {
+  if (!run) return '';
+  const domain = run.artifacts?.route?.domain;
+  if (domain !== 'bounty') return '';
+  const answer = run.consensus?.answer || '';
+  if (!answer) return '';
+
+  const summary = extractSection(answer, ['summary', 'tl;dr', 'overview']);
+  const findings = extractSection(answer, [
+    'existing bug reports / internal findings',
+    'existing bug reports',
+    'internal findings',
+    'findings',
+    'issues'
+  ]);
+  const launch = extractSection(answer, ['launch commands', 'launch command', 'launch approach', 'launch']);
+  const code = extractCodeBlock(answer);
+  const findingBullets = findings ? [] : extractBullets(answer, /(finding|issue|bug|vuln|risk)/i, 3);
+
+  if (!summary && !findings && !launch && !code && !findingBullets.length) return '';
+
+  const sections = [];
+  if (summary) {
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Summary</div>
+        <div class="bounty-section-body">${renderMarkdown(summary)}</div>
+      </div>
+    `);
+  }
+  if (launch || code) {
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Launch</div>
+        ${launch ? `<div class="bounty-section-body">${renderMarkdown(launch)}</div>` : ''}
+        ${code ? `<pre class="bounty-code">${escapeHtml(code)}</pre>` : ''}
+      </div>
+    `);
+  }
+  if (findings || findingBullets.length) {
+    const body = findings
+      ? renderMarkdown(findings)
+      : `<ul>${findingBullets.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+    sections.push(`
+      <div class="bounty-section">
+        <div class="bounty-section-title">Findings</div>
+        <div class="bounty-section-body">${body}</div>
+      </div>
+    `);
+  }
+
+  return `
+    <div class="bounty-summary">
+      <div class="bounty-title">Bounty Summary</div>
+      ${sections.join('')}
+    </div>
+  `;
+}
+
 // Pipeline progress
 function buildPhaseState(run) {
   const phases = [
@@ -568,6 +674,7 @@ function renderRuns(runs) {
 
     const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
     const progressHtml = status === 'running' ? renderRunProgress(run) : '';
+    const bountySummary = renderBountySummary(run);
 
     return `
       <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}" data-run-output="${escapeHtml(outputType)}">
@@ -579,6 +686,7 @@ function renderRuns(runs) {
           </div>
           <div class="run-card-query">${escapeHtml(run.query || '')}</div>
           ${progressHtml}
+          ${bountySummary}
           ${outputHtml}
           <details class="run-card-expand">
             <summary>View full details</summary>
