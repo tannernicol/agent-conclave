@@ -1,10 +1,13 @@
+// Conclave UI - Decision Pipeline Dashboard
+
 const statusEl = document.getElementById('status');
 const smokeEl = document.getElementById('smoke');
 const latestEl = document.getElementById('latest');
 const latestTimeEl = document.getElementById('latest-time');
 const latestPromptEl = document.getElementById('latest-prompt');
 const progressEl = document.getElementById('pipeline-progress');
-const runsEl = document.getElementById('run-rows');
+const runListEl = document.getElementById('run-list');
+const runCountEl = document.getElementById('run-count');
 const form = document.getElementById('query-form');
 const rerunBtn = document.getElementById('rerun-latest');
 const clearBtn = document.getElementById('clear-form');
@@ -20,42 +23,15 @@ let currentRunId = null;
 let pollTimer = null;
 let currentPromptId = null;
 
-function updatePromptButton() {
-  if (!savePromptBtn) return;
-  savePromptBtn.textContent = currentPromptId ? 'Update Prompt' : 'Save Prompt';
-}
-
+// Utilities
 async function fetchJSON(url, options) {
   const resp = await fetch(url, options);
-  if (!resp.ok) {
-    throw new Error(`Request failed: ${resp.status}`);
-  }
+  if (!resp.ok) throw new Error(`Request failed: ${resp.status}`);
   return await resp.json();
 }
 
-function setStatus(text) {
-  statusEl.textContent = text;
-  statusEl.setAttribute('aria-busy', text.toLowerCase().includes('running') ? 'true' : 'false');
-}
-
-function setPromptStatus(text) {
-  if (promptStatusEl) {
-    promptStatusEl.textContent = text;
-  }
-}
-
-function setSmoke(active) {
-  if (active) {
-    smokeEl.classList.add('active');
-    if (smokeStatusEl) smokeStatusEl.textContent = 'Consensus reached.';
-  } else {
-    smokeEl.classList.remove('active');
-    if (smokeStatusEl) smokeStatusEl.textContent = 'No consensus in progress.';
-  }
-}
-
 function escapeHtml(value) {
-  return value
+  return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -63,40 +39,61 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function sanitizeUrl(url) {
-  try {
-    const parsed = new URL(url, window.location.origin);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return parsed.href;
-    }
-  } catch (err) {
-    return '#';
-  }
-  return '#';
+function formatTime(value) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(undefined, {
+    month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit'
+  });
 }
 
+function formatTimeShort(value) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+// Status management
+function setStatus(text, type = '') {
+  statusEl.textContent = text;
+  statusEl.className = 'status-pill ui-mono';
+  if (type) statusEl.classList.add(type);
+  statusEl.setAttribute('aria-busy', type === 'running' ? 'true' : 'false');
+}
+
+function setPromptStatus(text) {
+  if (promptStatusEl) promptStatusEl.textContent = text;
+}
+
+function setSmoke(active) {
+  smokeEl.classList.toggle('active', active);
+  if (smokeStatusEl) smokeStatusEl.textContent = active ? 'Consensus reached.' : 'No consensus in progress.';
+}
+
+function updatePromptButton() {
+  if (savePromptBtn) {
+    savePromptBtn.textContent = currentPromptId ? 'Update' : 'Save';
+  }
+}
+
+// Markdown rendering
 function renderInline(text) {
-  let value = text;
+  let value = escapeHtml(text);
   value = value.replace(/`([^`]+)`/g, '<code>$1</code>');
   value = value.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   value = value.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
-    const safe = sanitizeUrl(url);
-    return `<a href="${safe}" target="_blank" rel="noreferrer">${label}</a>`;
-  });
   return value;
 }
 
 function renderMarkdown(text) {
-  if (!text) {
-    return '<div class="empty-state">No output yet.</div>';
-  }
-  const escaped = escapeHtml(text);
-  const lines = escaped.split('\n');
+  if (!text) return '';
+  const lines = text.split('\n');
   let html = '';
   let inCode = false;
   let inUl = false;
-  let inOl = false;
   let paragraph = [];
 
   const flushParagraph = () => {
@@ -107,40 +104,22 @@ function renderMarkdown(text) {
   };
 
   const closeLists = () => {
-    if (inUl) {
-      html += '</ul>';
-      inUl = false;
-    }
-    if (inOl) {
-      html += '</ol>';
-      inOl = false;
-    }
+    if (inUl) { html += '</ul>'; inUl = false; }
   };
 
   lines.forEach((line) => {
     const trimmed = line.trim();
-    if (trimmed.startsWith('```')) {
-      if (inCode) {
-        html += '</code></pre>';
-        inCode = false;
-      } else {
-        flushParagraph();
-        closeLists();
-        inCode = true;
-        html += '<pre><code>';
-      }
-      return;
-    }
 
-    if (inCode) {
-      html += `${line}\n`;
+    if (trimmed.startsWith('```')) {
+      if (inCode) { html += '</code></pre>'; inCode = false; }
+      else { flushParagraph(); closeLists(); inCode = true; html += '<pre><code>'; }
       return;
     }
+    if (inCode) { html += `${escapeHtml(line)}\n`; return; }
 
     const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
     if (headingMatch) {
-      flushParagraph();
-      closeLists();
+      flushParagraph(); closeLists();
       const level = headingMatch[1].length;
       html += `<h${level}>${renderInline(headingMatch[2])}</h${level}>`;
       return;
@@ -149,135 +128,142 @@ function renderMarkdown(text) {
     const ulMatch = trimmed.match(/^[-*]\s+(.*)$/);
     if (ulMatch) {
       flushParagraph();
-      if (inOl) {
-        html += '</ol>';
-        inOl = false;
-      }
-      if (!inUl) {
-        html += '<ul>';
-        inUl = true;
-      }
+      if (!inUl) { html += '<ul>'; inUl = true; }
       html += `<li>${renderInline(ulMatch[1])}</li>`;
       return;
     }
 
-    const olMatch = trimmed.match(/^\d+\.\s+(.*)$/);
-    if (olMatch) {
-      flushParagraph();
-      if (inUl) {
-        html += '</ul>';
-        inUl = false;
-      }
-      if (!inOl) {
-        html += '<ol>';
-        inOl = true;
-      }
-      html += `<li>${renderInline(olMatch[1])}</li>`;
-      return;
-    }
-
-    if (!trimmed) {
-      flushParagraph();
-      closeLists();
-      return;
-    }
+    if (!trimmed) { flushParagraph(); closeLists(); return; }
     paragraph.push(trimmed);
   });
 
   flushParagraph();
   closeLists();
-  if (inCode) {
-    html += '</code></pre>';
-  }
+  if (inCode) html += '</code></pre>';
   return html;
 }
 
-function renderEmptyState() {
+// Check if output indicates insufficient evidence
+function isInsufficientEvidence(consensus) {
+  if (!consensus) return false;
+  return consensus.insufficient_evidence ||
+    (consensus.answer && consensus.answer.includes('Insufficient Evidence'));
+}
+
+// Parse issue details from consensus
+function parseIssueDetails(consensus) {
+  const details = {
+    evidenceCount: '?',
+    minEvidence: 2,
+    maxSignal: '?',
+    pdfRatio: '?',
+    issues: []
+  };
+
+  if (!consensus || !consensus.answer) return details;
+
+  const text = consensus.answer;
+  const evMatch = text.match(/Evidence count:\s*(\d+)\s*\(min\s*(\d+)\)/i);
+  if (evMatch) {
+    details.evidenceCount = evMatch[1];
+    details.minEvidence = evMatch[2];
+  }
+
+  const sigMatch = text.match(/Max signal score:\s*([\d.]+)/i);
+  if (sigMatch) details.maxSignal = sigMatch[1];
+
+  const pdfMatch = text.match(/PDF ratio:\s*([\d.]+)/i);
+  if (pdfMatch) details.pdfRatio = pdfMatch[1];
+
+  const issuesMatch = text.match(/Issues:\s*([^\n]+)/i);
+  if (issuesMatch) {
+    details.issues = issuesMatch[1].split(',').map(s => s.trim());
+  }
+
+  return details;
+}
+
+// Render error state for insufficient evidence
+function renderInsufficientEvidence(consensus, run) {
+  const details = parseIssueDetails(consensus);
+  const collections = run?.artifacts?.route?.collections || [];
+
   return `
-    <div class="empty-state">
-      <p>Ask a question about <strong>health</strong>, <strong>tax</strong>, <strong>money</strong>, or <strong>bounty</strong> to get a multi-model consensus.</p>
-      <p class="ui-muted">Example: "What vitamins should I take daily?"</p>
+    <div class="output-error">
+      <div class="output-error-title">Insufficient Evidence</div>
+      <div class="output-error-details">
+        <p>Conclave couldn't find enough high-quality evidence to provide a confident answer.</p>
+        <ul>
+          <li>Evidence found: <strong>${details.evidenceCount}</strong> (need ${details.minEvidence}+)</li>
+          <li>Max signal score: <strong>${details.maxSignal}</strong></li>
+          ${details.issues.length ? `<li>Issues: ${details.issues.join(', ')}</li>` : ''}
+        </ul>
+      </div>
+      <div class="output-error-help">
+        <strong>Try:</strong> Add supporting notes above, specify a collection (tax-rag, health-rag, bounty-rag), or run <code>conclave index</code> to refresh NAS content.
+      </div>
     </div>
   `;
 }
 
-function formatTime(value) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
-}
-
-function extractRecommendations(text, limit = 6) {
-  if (!text) return [];
+// Render success output
+function renderSuccessOutput(text) {
   const lines = text.split('\n');
-  const recs = [];
-  let inSection = false;
-  let sectionFound = false;
-  const sectionKeys = ['recommend', 'schedule', 'allocation', 'plan', 'summary', 'daily'];
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) continue;
-    const lower = line.toLowerCase();
-    if (line.startsWith('#')) {
-      if (sectionKeys.some((key) => lower.includes(key))) {
-        inSection = true;
-        sectionFound = true;
-        continue;
-      }
-      if (sectionFound && inSection) break;
-      continue;
+  const bullets = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('###')) continue; // Skip headers
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/) || trimmed.match(/^\d+\.\s+(.*)$/);
+    if (bulletMatch) bullets.push(bulletMatch[1]);
+    else if (trimmed && !trimmed.startsWith('#') && bullets.length < 6) {
+      bullets.push(trimmed);
     }
-    const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
-    const numMatch = line.match(/^\d+\.\s+(.*)$/);
-    if (bulletMatch) {
-      recs.push(bulletMatch[1]);
-    } else if (numMatch) {
-      recs.push(numMatch[1]);
-    } else if (line.includes('|') && !line.includes('---')) {
-      const parts = line.split('|').map((p) => p.trim()).filter(Boolean);
-      if (parts.length >= 3 && parts[0] !== 'Time') {
-        recs.push(`${parts[0]} — ${parts[1]} (${parts[2]})`);
-      }
-    } else if (!sectionFound && recs.length < 2) {
-      recs.push(line);
-    }
-    if (recs.length >= limit) break;
+    if (bullets.length >= 6) break;
   }
-  return recs;
+
+  if (!bullets.length) {
+    return `<div class="markdown">${renderMarkdown(text)}</div>`;
+  }
+
+  return `
+    <div class="output-success">
+      <ul class="output-list">
+        ${bullets.map(b => `<li>${renderInline(b)}</li>`).join('')}
+      </ul>
+    </div>
+  `;
 }
 
-function renderRecommendations(text) {
-  const recs = extractRecommendations(text);
-  if (!recs.length) {
-    return '<div class="empty-state">No recommendations yet.</div>';
-  }
-  return `<ul class="output-list">${recs.map((item) => `<li>${renderInline(escapeHtml(item))}</li>`).join('')}</ul>`;
-}
-
+// Pipeline progress
 function buildPhaseState(run) {
   const phases = [
     { key: 'route', label: 'Route' },
     { key: 'retrieve', label: 'RAG' },
     { key: 'reasoner', label: 'Reason' },
     { key: 'critic', label: 'Critic' },
-    { key: 'summarizer', label: 'Summarize' },
+    { key: 'summarizer', label: 'Summary' },
   ];
   if (!run) return phases;
+
   const events = run.events || [];
   const done = new Set();
+
   events.forEach((event) => {
     if (event.phase === 'route' && event.status === 'done') done.add('route');
     if (event.phase === 'retrieve' && event.status === 'done') done.add('retrieve');
     if (event.phase === 'model' && event.role) done.add(event.role);
   });
+
   if (run.status === 'complete') {
     phases.forEach((phase) => done.add(phase.key));
   }
+
   let active = null;
   if (run.status === 'running') {
     active = phases.find((phase) => !done.has(phase.key))?.key || null;
   }
+
   return phases.map((phase) => ({
     ...phase,
     done: done.has(phase.key),
@@ -291,6 +277,7 @@ function renderProgress(run) {
     progressEl.innerHTML = '';
     return;
   }
+
   const phases = buildPhaseState(run);
   progressEl.innerHTML = phases.map((phase) => {
     const classes = ['phase'];
@@ -300,316 +287,248 @@ function renderProgress(run) {
   }).join('');
 }
 
-function renderEvidence(run) {
-  const evidence = run?.artifacts?.context?.evidence || [];
-  const collections = run?.artifacts?.route?.collections || [];
-  if (!evidence.length) {
-    return '<div class="empty-state">No evidence captured.</div>';
-  }
-  const items = evidence.slice(0, 8).map((item) => {
-    const title = item.title || item.name || item.path || item.file_path || 'Evidence';
-    const path = item.path || item.file_path || '';
-    const score = typeof item.signal_score === 'number' ? item.signal_score.toFixed(2) : '—';
-    const collection = item.collection || item.source || 'unknown';
-    const detail = path ? `${title} (${path})` : title;
-    return `<li>${escapeHtml(detail)} <span class="ui-muted">[${escapeHtml(collection)} | signal ${score}]</span></li>`;
-  }).join('');
-  const collectionLine = collections.length ? `<div class="ui-muted">Collections: ${escapeHtml(collections.join(', '))}</div>` : '';
-  return `${collectionLine}<ul class="evidence-list">${items}</ul>`;
-}
-
-function renderModelFooter(run) {
-  const route = run?.artifacts?.route;
-  const planDetails = route?.plan_details;
-  const plan = route?.plan;
-  if (!plan && !planDetails) return '';
-  const pick = (role) => {
-    if (planDetails && planDetails[role]) {
-      return planDetails[role].label || planDetails[role].id;
-    }
-    return plan ? plan[role] : '';
-  };
-  const parts = [
-    pick('router') ? `Router: ${pick('router')}` : null,
-    pick('reasoner') ? `Reasoner: ${pick('reasoner')}` : null,
-    pick('critic') ? `Critic: ${pick('critic')}` : null,
-    pick('summarizer') ? `Summarizer: ${pick('summarizer')}` : null,
-  ].filter(Boolean);
-  if (!parts.length) return '';
-  return `<div class="model-footer">Models: ${escapeHtml(parts.join(' · '))}</div>`;
-}
-
-function summarizeEvent(event) {
-  const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
-  const phase = event.phase || event.event || 'event';
-  let detail = '';
-  if (event.status) detail = event.status;
-  if (event.role && event.model_id) detail = `${event.role} → ${event.model_label || event.model_id}`;
-  if (event.role && event.ok === false) detail += ' (failed)';
-  if (event.phase === 'route' && event.status === 'done') {
-    const plan = event.models || (event.route && (event.route.plan_details || event.route.plan)) || {};
-    const parts = [];
-    const reasoner = plan.reasoner?.label || plan.reasoner?.id || plan.reasoner;
-    const critic = plan.critic?.label || plan.critic?.id || plan.critic;
-    const summarizer = plan.summarizer?.label || plan.summarizer?.id || plan.summarizer;
-    if (reasoner) parts.push(`reasoner:${reasoner}`);
-    if (critic) parts.push(`critic:${critic}`);
-    if (summarizer) parts.push(`summarizer:${summarizer}`);
-    if (parts.length) detail = parts.join(' ');
-  }
-  if (event.phase === 'quality' && event.issues && event.issues.length) {
-    detail = `issues: ${event.issues.join(', ')}`;
-  }
-  return `${time} ${phase}${detail ? ` · ${detail}` : ''}`.trim();
-}
-
-function renderLogs(run) {
-  const events = run?.events || [];
-  if (!events.length) {
-    return '<div class="empty-state">No logs yet.</div>';
-  }
-  const preview = events.slice(-4).map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
-  const full = events.map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
-  const outputText = run?.consensus?.answer || run?.error || '';
-  const outputBody = outputText ? renderMarkdown(outputText) : '<div class="empty-state">No output.</div>';
-  const evidenceBody = renderEvidence(run);
-  const modelFooter = renderModelFooter(run);
-  const errors = (run?.artifacts?.quality?.issues || []).filter((item) => item === 'rag_errors' || item === 'source_errors');
-  const errorBadge = errors.length ? `<div class="ui-chip run-chip">retrieval issues</div>` : '';
-  return `
-    <ul class="log-list">${preview}</ul>
-    ${errorBadge}
-    <details class="log-detail">
-      <summary>View full log + output</summary>
-      <div class="log-detail-body">
-        <div>
-          <div class="log-section-title">Full Log</div>
-          <ul class="log-list">${full}</ul>
-        </div>
-        <div>
-          <div class="log-section-title">Full Output</div>
-          <div class="markdown">${outputBody}</div>
-          ${modelFooter}
-        </div>
-        <div>
-          <div class="log-section-title">Evidence</div>
-          ${evidenceBody}
-        </div>
-      </div>
-    </details>
-  `;
-}
-
-function resolveTitle(run) {
-  if (run.meta && run.meta.input_title) return run.meta.input_title;
-  if (run.meta && run.meta.topic) return run.meta.topic;
-  if (run.consensus && run.consensus.pope) return run.consensus.pope;
-  return run.query || run.id;
-}
-
+// Render Latest Decision
 function renderLatest(latest) {
   if (!latest) {
-    latestEl.innerHTML = renderEmptyState();
+    latestEl.innerHTML = `
+      <div class="empty-state">
+        <p>Ask a question to get a multi-model consensus.</p>
+        <p class="ui-muted">Conclave routes to the best models, gathers evidence, and deliberates.</p>
+      </div>
+    `;
     latestTimeEl.textContent = '—';
-    if (latestPromptEl) latestPromptEl.textContent = 'Prompt: —';
+    if (latestPromptEl) latestPromptEl.textContent = '';
     renderProgress(null);
     return;
   }
-  if (latest.status === 'running') {
-    latestEl.innerHTML = '<div class="empty-state">Running consensus... check the Decision Log for live events.</div>';
-    latestTimeEl.textContent = formatTime(latest.created_at);
-    if (latestPromptEl) {
-      const input = latest.meta && latest.meta.input_title ? ` | Input: ${latest.meta.input_title}` : '';
-      latestPromptEl.textContent = `Running: ${latest.query || '—'}${input}`;
-    }
-    renderProgress(latest);
-    return;
-  }
-  if (latest.status === 'failed') {
-    latestEl.innerHTML = `<div class="empty-state">Conclave failed: ${escapeHtml(latest.error || 'unknown error')}</div>`;
-    latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
-    renderProgress(latest);
-    return;
-  }
-  if (!latest.consensus) {
-    latestEl.innerHTML = renderEmptyState();
-    latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
-    renderProgress(latest);
-    return;
-  }
-  latestEl.innerHTML = renderRecommendations(latest.consensus.answer || '');
+
   latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
+
   if (latestPromptEl) {
-    const prompt = latest.query || '—';
-    const input = latest.meta && latest.meta.input_title ? ` | Input: ${latest.meta.input_title}` : '';
-    latestPromptEl.textContent = `Prompt: ${prompt}${input}`;
+    const prompt = latest.query || '';
+    latestPromptEl.textContent = prompt ? `"${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"` : '';
   }
+
+  if (latest.status === 'running') {
+    latestEl.innerHTML = `
+      <div class="empty-state">
+        <p>Running consensus...</p>
+        <p class="ui-muted">Check the pipeline stages above for progress.</p>
+      </div>
+    `;
+    renderProgress(latest);
+    return;
+  }
+
+  if (latest.status === 'failed') {
+    latestEl.innerHTML = `
+      <div class="output-error">
+        <div class="output-error-title">Pipeline Failed</div>
+        <div class="output-error-details">${escapeHtml(latest.error || 'Unknown error')}</div>
+      </div>
+    `;
+    renderProgress(latest);
+    return;
+  }
+
+  if (!latest.consensus) {
+    latestEl.innerHTML = `<div class="empty-state">No consensus generated.</div>`;
+    renderProgress(latest);
+    return;
+  }
+
+  if (isInsufficientEvidence(latest.consensus)) {
+    latestEl.innerHTML = renderInsufficientEvidence(latest.consensus, latest);
+  } else {
+    latestEl.innerHTML = renderSuccessOutput(latest.consensus.answer || '');
+  }
+
   renderProgress(latest);
 }
 
+// Render Run History as cards
 function renderRuns(runs) {
-  runsEl.innerHTML = '';
+  if (!runListEl) return;
+
+  if (runCountEl) {
+    runCountEl.textContent = `${runs.length} run${runs.length !== 1 ? 's' : ''}`;
+  }
+
   if (!runs.length) {
-    runsEl.innerHTML = '<div class="empty-state">No runs yet. Start with a prompt to see decisions logged here.</div>';
+    runListEl.innerHTML = `<div class="empty-state">No runs yet. Ask a question to see history here.</div>`;
     return;
   }
-  runs.forEach((run) => {
-    const row = document.createElement('div');
-    row.className = 'table-row';
-    row.dataset.runId = run.id || '';
-    const title = resolveTitle(run);
+
+  runListEl.innerHTML = runs.map((run) => {
+    const title = run.meta?.input_title || run.query?.slice(0, 60) || run.id;
     const status = run.status || 'unknown';
-    const output = run.consensus && run.consensus.answer ? run.consensus.answer : run.error || 'No output.';
-    const inputInfo = run.meta && run.meta.input_title ? run.meta.input_title : (run.meta && run.meta.input_path ? run.meta.input_path.split('/').pop() : '—');
-    const sourceInfo = run.meta && run.meta.source ? run.meta.source : 'api';
-    row.innerHTML = `
-      <div class="cell cell-title">
-        ${escapeHtml(title)}
-        <div class="ui-chip run-chip">${escapeHtml(status)}</div>
-        <div class="ui-dim ui-mono run-id">${escapeHtml(run.id || '')}</div>
-      </div>
-      <div class="cell cell-prompt">
-        <div class="clamp-2">${escapeHtml(run.query || '')}</div>
-        <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)} · Source: ${escapeHtml(sourceInfo)}</div>
-      </div>
-      <div class="cell">${renderLogs(run)}</div>
-      <div class="cell markdown clamp-3">${renderRecommendations(output)}</div>
-      <div class="cell cell-time ui-mono">
-        ${formatTime(run.completed_at || run.created_at)}
-        <div class="run-actions">
-          <button class="ui-button ghost edit-run" data-run-id="${escapeHtml(run.id || '')}">Edit</button>
-          <button class="ui-button ghost rerun-run" data-run-id="${escapeHtml(run.id || '')}">Re-run</button>
-          <button class="ui-button ghost delete-run" data-run-id="${escapeHtml(run.id || '')}">Delete</button>
+    const isInsufficient = isInsufficientEvidence(run.consensus);
+    const hasError = status === 'failed' || isInsufficient;
+
+    let statusChip = '';
+    if (status === 'running') {
+      statusChip = '<span class="status-chip running">Running</span>';
+    } else if (status === 'failed') {
+      statusChip = '<span class="status-chip failed">Failed</span>';
+    } else if (isInsufficient) {
+      statusChip = '<span class="status-chip insufficient">Low Evidence</span>';
+    } else if (status === 'complete') {
+      statusChip = '<span class="status-chip complete">Complete</span>';
+    }
+
+    let output = '';
+    if (run.consensus?.answer) {
+      if (isInsufficient) {
+        output = 'Insufficient evidence to provide confident answer';
+      } else {
+        // Extract first meaningful line
+        const lines = run.consensus.answer.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#')) {
+            output = trimmed.replace(/^[-*•]\s+/, '').slice(0, 120);
+            break;
+          }
+        }
+      }
+    } else if (run.error) {
+      output = run.error;
+    }
+
+    const cardClass = status === 'running' ? 'running' : (hasError ? 'error' : 'success');
+
+    return `
+      <div class="run-card ${cardClass}" data-run-id="${escapeHtml(run.id || '')}">
+        <div class="run-card-main">
+          <div class="run-card-title">
+            ${escapeHtml(title.slice(0, 60))}${title.length > 60 ? '...' : ''}
+            ${statusChip}
+          </div>
+          <div class="run-card-query">${escapeHtml(run.query || '')}</div>
+          ${output ? `<div class="run-card-output ${hasError ? 'error' : ''}">${escapeHtml(output)}</div>` : ''}
+          <details class="run-card-expand">
+            <summary>View details</summary>
+            <div class="run-card-detail">
+              ${renderRunDetail(run)}
+            </div>
+          </details>
+        </div>
+        <div class="run-card-side">
+          <div class="run-card-time">${formatTime(run.completed_at || run.created_at)}</div>
+          <div class="run-card-actions">
+            <button class="ui-button ghost small edit-run" data-run-id="${escapeHtml(run.id || '')}">Edit</button>
+            <button class="ui-button ghost small rerun-run" data-run-id="${escapeHtml(run.id || '')}">Rerun</button>
+            <button class="ui-button ghost small delete-run" data-run-id="${escapeHtml(run.id || '')}">×</button>
+          </div>
         </div>
       </div>
     `;
-    runsEl.appendChild(row);
-  });
+  }).join('');
 }
 
+function renderRunDetail(run) {
+  const events = run.events || [];
+  const lastEvents = events.slice(-6);
+
+  const logItems = lastEvents.map((event) => {
+    const time = event.timestamp ? formatTimeShort(event.timestamp) : '';
+    const phase = event.phase || event.event || 'event';
+    let detail = event.status || '';
+    if (event.role && event.model_id) {
+      detail = `${event.role} → ${event.model_label || event.model_id}`;
+    }
+    if (event.phase === 'quality' && event.issues?.length) {
+      detail = event.issues.join(', ');
+    }
+    return `<li>${time} ${phase}${detail ? ': ' + detail : ''}</li>`;
+  }).join('');
+
+  const evidence = run.artifacts?.context?.evidence || [];
+  const evidenceItems = evidence.slice(0, 5).map((item) => {
+    const name = item.title || item.name || item.path?.split('/').pop() || 'Evidence';
+    const score = typeof item.signal_score === 'number' ? item.signal_score.toFixed(2) : '—';
+    return `<li>${escapeHtml(name)} <span class="ui-muted">[${score}]</span></li>`;
+  }).join('');
+
+  return `
+    <div class="log-section">
+      <div class="log-section-title">Pipeline Log</div>
+      <ul class="log-list">${logItems || '<li>No events</li>'}</ul>
+    </div>
+    ${evidence.length ? `
+    <div class="log-section">
+      <div class="log-section-title">Evidence (${evidence.length})</div>
+      <ul class="log-list">${evidenceItems}</ul>
+    </div>
+    ` : ''}
+  `;
+}
+
+// Render Saved Prompts
 function renderPromptList(prompts) {
   if (!promptListEl) return;
-  promptListEl.innerHTML = '';
+
+  if (promptCountEl) {
+    promptCountEl.textContent = `${prompts.length} saved`;
+  }
+
   if (!prompts.length) {
-    promptListEl.innerHTML = '<div class="empty-state">No saved prompts yet.</div>';
-    if (promptCountEl) promptCountEl.textContent = '0 saved';
+    promptListEl.innerHTML = `<div class="empty-state">No saved prompts yet.</div>`;
     return;
   }
-  if (promptCountEl) promptCountEl.textContent = `${prompts.length} saved`;
-  prompts.forEach((prompt) => {
-    const card = document.createElement('div');
-    card.className = 'prompt-card';
-    const title = prompt.title || prompt.query || prompt.id;
-    const updated = prompt.updated_at ? formatTime(prompt.updated_at) : '—';
-    card.innerHTML = `
-      <div class="prompt-card-title">${escapeHtml(title)}</div>
-      <div class="prompt-card-meta">Updated: ${escapeHtml(updated)}</div>
-      <div class="prompt-card-meta clamp-2">${escapeHtml(prompt.query || '')}</div>
-      <div class="prompt-card-actions">
-        <button class="ui-button" data-action="load" data-id="${prompt.id}">Load</button>
-        <button class="ui-button primary" data-action="run" data-id="${prompt.id}">Run</button>
-        <button class="ui-button ghost" data-action="delete" data-id="${prompt.id}">Delete</button>
+
+  promptListEl.innerHTML = prompts.map((prompt) => {
+    const title = prompt.title || prompt.query?.slice(0, 40) || prompt.id;
+    return `
+      <div class="prompt-card">
+        <div class="prompt-card-title">${escapeHtml(title)}</div>
+        <div class="prompt-card-meta">Updated ${formatTime(prompt.updated_at)}</div>
+        <div class="prompt-card-query">${escapeHtml(prompt.query || '')}</div>
+        <div class="prompt-card-actions">
+          <button class="ui-button small" data-action="load" data-id="${prompt.id}">Load</button>
+          <button class="ui-button small primary" data-action="run" data-id="${prompt.id}">Run</button>
+          <button class="ui-button ghost small" data-action="delete" data-id="${prompt.id}">×</button>
+        </div>
       </div>
     `;
-    promptListEl.appendChild(card);
-  });
+  }).join('');
 }
 
-function parseInputMarkdown(content) {
-  const lines = (content || '').split('\n');
-  let title = '';
-  let question = '';
-  let notes = [];
-  let artifacts = [];
-  let section = '';
-  lines.forEach((line) => {
-    if (line.startsWith('# ')) {
-      title = line.replace(/^#\\s+/, '').trim();
-      return;
-    }
-    if (line.startsWith('## ')) {
-      section = line.replace(/^##\\s+/, '').trim().toLowerCase();
-      return;
-    }
-    if (!section) return;
-    if (section === 'question') {
-      if (line.trim()) question += (question ? '\\n' : '') + line.trim();
-      return;
-    }
-    if (section === 'notes') {
-      notes.push(line);
-      return;
-    }
-    if (section === 'artifacts') {
-      const value = line.replace(/^[-*]\\s+/, '').trim();
-      if (value) artifacts.push(value);
-    }
-  });
-  return {
-    title,
-    question,
-    notes: notes.join('\\n').trim(),
-    artifacts,
-  };
-}
-
-async function loadRunForEdit(run) {
-  if (!run) return;
-  if (run.meta && run.meta.prompt_id) {
-    await loadPrompt(run.meta.prompt_id);
-    return;
-  }
-  const inputPath = run.meta && run.meta.input_path ? run.meta.input_path : '';
-  let inputData = null;
-  if (inputPath && inputPath.includes('/inputs/')) {
-    const inputId = inputPath.split('/').pop();
-    try {
-      inputData = await fetchJSON(`/api/inputs/${inputId}`);
-    } catch (err) {
-      console.error(err);
-    }
-  }
-  const parsed = inputData ? parseInputMarkdown(inputData.content) : { title: '', question: '', notes: '', artifacts: [] };
-  document.getElementById('query').value = run.query || parsed.question || '';
-  document.getElementById('input-title').value = parsed.title || '';
-  document.getElementById('input-notes').value = parsed.notes || '';
-  document.getElementById('input-artifacts').value = (parsed.artifacts || []).join('\\n');
-  currentPromptId = null;
-  setPromptStatus('Loaded run (unsaved)');
-  updatePromptButton();
-}
-
+// Data fetching
 async function refresh() {
   try {
     const status = await fetchJSON('/api/status');
     renderLatest(status.latest);
   } catch (err) {
-    console.error(err);
+    console.error('Status fetch failed:', err);
   }
+
   try {
-    const runs = await fetchJSON('/api/runs?limit=8');
+    const runs = await fetchJSON('/api/runs?limit=10');
     renderRuns(runs.runs || []);
   } catch (err) {
-    console.error(err);
+    console.error('Runs fetch failed:', err);
   }
+
   try {
     const prompts = await fetchJSON('/api/prompts?limit=20');
     renderPromptList(prompts.prompts || []);
   } catch (err) {
-    console.error(err);
+    console.error('Prompts fetch failed:', err);
   }
 }
 
+// Run management
 async function startRun(query) {
-  setStatus('Running...');
+  setStatus('Running...', 'running');
   setSmoke(false);
   renderProgress({ status: 'running', events: [] });
+
   const inputTitle = document.getElementById('input-title').value.trim();
   const inputNotes = document.getElementById('input-notes').value.trim();
   const inputArtifacts = document.getElementById('input-artifacts').value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line);
+    .split('\n').map(l => l.trim()).filter(Boolean);
+
   let inputId = null;
   if (inputNotes) {
     const inputResp = await fetchJSON('/api/inputs', {
@@ -619,43 +538,64 @@ async function startRun(query) {
     });
     inputId = inputResp.input_id;
   }
+
   const payload = { query };
-  if (inputId) {
-    payload.input_id = inputId;
-  }
-  if (inputTitle) {
-    payload.input_title = inputTitle;
-  }
-  if (currentPromptId) {
-    payload.prompt_id = currentPromptId;
-  }
+  if (inputId) payload.input_id = inputId;
+  if (inputTitle) payload.input_title = inputTitle;
+  if (currentPromptId) payload.prompt_id = currentPromptId;
+
   const resp = await fetchJSON('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+
   currentRunId = resp.run_id;
-  if (!currentRunId) {
-    setStatus('Unable to start run.');
-    return;
-  }
-  pollRun(currentRunId);
+  if (currentRunId) pollRun(currentRunId);
+  else setStatus('Failed to start', 'error');
 }
 
+async function pollRun(runId) {
+  if (pollTimer) clearInterval(pollTimer);
+
+  pollTimer = setInterval(async () => {
+    try {
+      const run = await fetchJSON(`/api/runs/${runId}`);
+
+      if (run.status === 'complete') {
+        clearInterval(pollTimer);
+        setSmoke(true);
+        setStatus('Complete', 'success');
+        renderLatest(run);
+        refresh();
+      } else if (run.status === 'failed') {
+        clearInterval(pollTimer);
+        setStatus('Failed', 'error');
+        renderLatest(run);
+        refresh();
+      } else {
+        renderLatest(run);
+      }
+    } catch (err) {
+      console.error('Poll error:', err);
+    }
+  }, 2000);
+}
+
+// Prompt management
 async function savePrompt() {
   const query = document.getElementById('query').value.trim();
   const title = document.getElementById('input-title').value.trim();
   const notes = document.getElementById('input-notes').value.trim();
-  const artifacts = document.getElementById('input-artifacts').value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line);
+
   if (!query) {
-    setPromptStatus('Prompt required');
+    setPromptStatus('Enter a question first');
     return;
   }
-  const payload = { title, query, notes, artifacts };
+
+  const payload = { title, query, notes };
   let resp;
+
   if (currentPromptId) {
     resp = await fetchJSON(`/api/prompts/${currentPromptId}`, {
       method: 'PUT',
@@ -669,8 +609,9 @@ async function savePrompt() {
       body: JSON.stringify(payload),
     });
   }
+
   currentPromptId = resp.prompt.id;
-  setPromptStatus(`Saved: ${currentPromptId}`);
+  setPromptStatus('Saved');
   updatePromptButton();
   refresh();
 }
@@ -680,89 +621,64 @@ async function loadPrompt(promptId) {
   document.getElementById('query').value = prompt.query || '';
   document.getElementById('input-title').value = prompt.title || '';
   document.getElementById('input-notes').value = prompt.notes || '';
-  document.getElementById('input-artifacts').value = (prompt.artifacts || []).join('\n');
   currentPromptId = prompt.id;
-  setPromptStatus(`Loaded: ${prompt.id}`);
+  setPromptStatus('Loaded');
   updatePromptButton();
 }
 
 async function runPrompt(promptId) {
-  const resp = await fetchJSON(`/api/prompts/${promptId}/run`, {
-    method: 'POST',
-  });
+  const resp = await fetchJSON(`/api/prompts/${promptId}/run`, { method: 'POST' });
   currentRunId = resp.run_id;
   currentPromptId = promptId;
-  setStatus('Running...');
+  setStatus('Running...', 'running');
   setSmoke(false);
   updatePromptButton();
   pollRun(currentRunId);
 }
 
-async function pollRun(runId) {
-  if (pollTimer) {
-    clearInterval(pollTimer);
+async function loadRunForEdit(run) {
+  if (!run) return;
+  if (run.meta?.prompt_id) {
+    await loadPrompt(run.meta.prompt_id);
+    return;
   }
-  pollTimer = setInterval(async () => {
-    try {
-      const run = await fetchJSON(`/api/runs/${runId}`);
-      if (run.status === 'complete') {
-        clearInterval(pollTimer);
-        setSmoke(true);
-        setStatus('Complete');
-        renderLatest(run);
-        refresh();
-      } else if (run.status === 'failed') {
-        clearInterval(pollTimer);
-        setStatus(`Conclave failed: ${run.error || 'unknown error'}`);
-        renderLatest(run);
-      } else {
-        setStatus('Running...');
-        renderLatest(run);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }, 2000);
+  document.getElementById('query').value = run.query || '';
+  document.getElementById('input-title').value = run.meta?.input_title || '';
+  currentPromptId = null;
+  setPromptStatus('Loaded from run');
+  updatePromptButton();
 }
 
-form.addEventListener('submit', (event) => {
-  event.preventDefault();
+// Event listeners
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
   const query = document.getElementById('query').value.trim();
-  if (!query) return;
-  startRun(query);
+  if (query) startRun(query);
 });
 
 rerunBtn.addEventListener('click', async () => {
   try {
     const latest = await fetchJSON('/api/runs/latest');
-    if (!latest || !latest.query) {
-      setStatus('No prior consensus to re-run.');
+    if (!latest?.query) {
+      setStatus('No run to rerun');
       return;
     }
-    if (latest.meta && latest.meta.prompt_id) {
+    if (latest.meta?.prompt_id) {
       await runPrompt(latest.meta.prompt_id);
       return;
     }
-    const payload = { query: latest.query };
-    if (latest.meta && latest.meta.input_path) {
-      payload.input_path = latest.meta.input_path;
-    }
-    if (latest.meta && latest.meta.input_title) {
-      payload.input_title = latest.meta.input_title;
-    }
-    setStatus('Running...');
+    setStatus('Running...', 'running');
     setSmoke(false);
     const resp = await fetchJSON('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        query: latest.query,
+        input_path: latest.meta?.input_path,
+        input_title: latest.meta?.input_title
+      }),
     });
-    currentRunId = resp.run_id;
-    if (!currentRunId) {
-      setStatus('Unable to start run.');
-      return;
-    }
-    pollRun(currentRunId);
+    if (resp.run_id) pollRun(resp.run_id);
   } catch (err) {
     console.error(err);
   }
@@ -774,14 +690,12 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('input-notes').value = '';
   document.getElementById('input-artifacts').value = '';
   currentPromptId = null;
-  setPromptStatus('Not saved');
+  setPromptStatus('Ready');
   updatePromptButton();
 });
 
 if (savePromptBtn) {
-  savePromptBtn.addEventListener('click', () => {
-    savePrompt().catch((err) => console.error(err));
-  });
+  savePromptBtn.addEventListener('click', () => savePrompt().catch(console.error));
 }
 
 if (copyLatestBtn) {
@@ -789,9 +703,11 @@ if (copyLatestBtn) {
     try {
       const latest = await fetchJSON('/api/runs/latest');
       const text = latest?.consensus?.answer || '';
-      if (!text) return;
-      await navigator.clipboard.writeText(text);
-      setStatus('Copied consensus output.');
+      if (text) {
+        await navigator.clipboard.writeText(text);
+        setStatus('Copied');
+        setTimeout(() => setStatus('Idle'), 2000);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -799,78 +715,58 @@ if (copyLatestBtn) {
 }
 
 if (promptExamplesEl) {
-  promptExamplesEl.addEventListener('click', (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    const example = target.dataset.example;
-    if (!example) return;
-    document.getElementById('query').value = example;
+  promptExamplesEl.addEventListener('click', (e) => {
+    const example = e.target.dataset?.example;
+    if (example) document.getElementById('query').value = example;
   });
 }
 
 if (promptListEl) {
-  promptListEl.addEventListener('click', (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    const action = target.dataset.action;
-    const promptId = target.dataset.id;
+  promptListEl.addEventListener('click', async (e) => {
+    const action = e.target.dataset?.action;
+    const promptId = e.target.dataset?.id;
     if (!action || !promptId) return;
-    if (action === 'load') {
-      loadPrompt(promptId).catch((err) => console.error(err));
-    }
-    if (action === 'run') {
-      runPrompt(promptId).catch((err) => console.error(err));
-    }
+
+    if (action === 'load') await loadPrompt(promptId);
+    if (action === 'run') await runPrompt(promptId);
     if (action === 'delete') {
-      if (!confirm(`Delete prompt ${promptId}?`)) return;
-      fetchJSON(`/api/prompts/${promptId}`, { method: 'DELETE' })
-        .then(() => {
-          if (currentPromptId === promptId) {
-            currentPromptId = null;
-            setPromptStatus('Not saved');
-            updatePromptButton();
-          }
-          refresh();
-        })
-        .catch((err) => console.error(err));
+      if (!confirm('Delete this prompt?')) return;
+      await fetchJSON(`/api/prompts/${promptId}`, { method: 'DELETE' });
+      if (currentPromptId === promptId) {
+        currentPromptId = null;
+        setPromptStatus('Ready');
+        updatePromptButton();
+      }
+      refresh();
     }
   });
 }
 
-if (runsEl) {
-  runsEl.addEventListener('click', (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    const runId = target.dataset.runId;
+if (runListEl) {
+  runListEl.addEventListener('click', async (e) => {
+    const runId = e.target.dataset?.runId;
     if (!runId) return;
-    if (target.classList.contains('edit-run')) {
-      fetchJSON(`/api/runs/${runId}`)
-        .then((run) => loadRunForEdit(run))
-        .catch((err) => console.error(err));
-      return;
+
+    if (e.target.classList.contains('edit-run')) {
+      const run = await fetchJSON(`/api/runs/${runId}`);
+      loadRunForEdit(run);
     }
-    if (target.classList.contains('rerun-run')) {
-      setStatus('Running...');
+
+    if (e.target.classList.contains('rerun-run')) {
+      setStatus('Running...', 'running');
       setSmoke(false);
-      fetchJSON(`/api/runs/${runId}/rerun`, { method: 'POST' })
-        .then((resp) => {
-          if (resp.run_id) {
-            currentRunId = resp.run_id;
-            pollRun(currentRunId);
-          } else {
-            refresh();
-          }
-        })
-        .catch((err) => console.error(err));
-      return;
+      const resp = await fetchJSON(`/api/runs/${runId}/rerun`, { method: 'POST' });
+      if (resp.run_id) pollRun(resp.run_id);
     }
-    if (!target.classList.contains('delete-run')) return;
-    if (!confirm(`Delete run ${runId}?`)) return;
-    fetchJSON(`/api/runs/${runId}`, { method: 'DELETE' })
-      .then(() => refresh())
-      .catch((err) => console.error(err));
+
+    if (e.target.classList.contains('delete-run')) {
+      if (!confirm('Delete this run?')) return;
+      await fetchJSON(`/api/runs/${runId}`, { method: 'DELETE' });
+      refresh();
+    }
   });
 }
 
+// Initialize
 refresh();
 updatePromptButton();
