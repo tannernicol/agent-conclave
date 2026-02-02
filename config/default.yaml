@@ -81,14 +81,12 @@ models:
     - id: cli:claude
       provider: cli
       kind: external
-      model_label: claude:opus-4.5
+      model_label: claude (auto)
       command:
         - /home/tanner/.local/bin/claude
         - --print
         - --output-format
         - text
-        - --model
-        - opus
         - --no-session-persistence
       prompt_mode: arg
       timeout_seconds: 120
