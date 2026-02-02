@@ -143,6 +143,20 @@ async def run_detail_api(run_id: str, request: Request):
     return run
 
 
+@app.delete("/api/runs/{run_id}")
+async def run_delete_api(run_id: str, request: Request):
+    store = request.app.state.store
+    run = store.get_run(run_id)
+    if not run:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    prompt_id = (run.get("meta") or {}).get("prompt_id")
+    ok = store.delete_run(run_id)
+    store.rebuild_latest()
+    if prompt_id:
+        store.rebuild_prompt_latest(str(prompt_id))
+    return {"ok": ok}
+
+
 @app.post("/api/reconcile")
 async def reconcile_api(payload: dict, background: BackgroundTasks, request: Request):
     topic = payload.get("topic")
@@ -294,6 +308,39 @@ async def prompts_get_api(prompt_id: str, request: Request):
     if not path.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
     return json.loads(path.read_text())
+
+
+@app.delete("/api/prompts/{prompt_id}")
+async def prompts_delete_api(prompt_id: str, request: Request, delete_runs: bool = False):
+    config = request.app.state.config
+    path = _prompt_path(config, prompt_id)
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    prompt = json.loads(path.read_text())
+    input_path = prompt.get("input_path")
+    if input_path:
+        try:
+            Path(input_path).unlink()
+        except Exception:
+            pass
+    path.unlink()
+    store = request.app.state.store
+    store.rebuild_prompt_latest(prompt_id)
+    if delete_runs:
+        runs_dir = store._runs_dir()
+        if runs_dir.exists():
+            for run_dir in runs_dir.iterdir():
+                run_path = run_dir / "run.json"
+                if not run_path.exists():
+                    continue
+                try:
+                    run = json.loads(run_path.read_text())
+                except Exception:
+                    continue
+                if (run.get("meta") or {}).get("prompt_id") == prompt_id:
+                    store.delete_run(run.get("id"))
+        store.rebuild_latest()
+    return {"ok": True}
 
 
 @app.post("/api/prompts/{prompt_id}/run")

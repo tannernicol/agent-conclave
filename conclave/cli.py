@@ -39,6 +39,7 @@ def _build_meta(args: argparse.Namespace, input_path: str | None = None) -> dict
     path = input_path or getattr(args, "input_file", None)
     if path:
         meta["input_path"] = path
+    meta["source"] = "cli"
     if getattr(args, "max_evidence", None):
         meta["evidence_limit"] = args.max_evidence
     if getattr(args, "max_context_chars", None):

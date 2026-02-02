@@ -456,10 +456,12 @@ function renderRuns(runs) {
   runs.forEach((run) => {
     const row = document.createElement('div');
     row.className = 'table-row';
+    row.dataset.runId = run.id || '';
     const title = resolveTitle(run);
     const status = run.status || 'unknown';
     const output = run.consensus && run.consensus.answer ? run.consensus.answer : run.error || 'No output.';
     const inputInfo = run.meta && run.meta.input_title ? run.meta.input_title : (run.meta && run.meta.input_path ? run.meta.input_path.split('/').pop() : '—');
+    const sourceInfo = run.meta && run.meta.source ? run.meta.source : 'api';
     row.innerHTML = `
       <div class="cell cell-title">
         ${escapeHtml(title)}
@@ -468,11 +470,14 @@ function renderRuns(runs) {
       </div>
       <div class="cell cell-prompt">
         <div class="clamp-2">${escapeHtml(run.query || '')}</div>
-        <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)}</div>
+        <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)} · Source: ${escapeHtml(sourceInfo)}</div>
       </div>
       <div class="cell">${renderLogs(run)}</div>
       <div class="cell markdown clamp-3">${renderRecommendations(output)}</div>
-      <div class="cell cell-time ui-mono">${formatTime(run.completed_at || run.created_at)}</div>
+      <div class="cell cell-time ui-mono">
+        ${formatTime(run.completed_at || run.created_at)}
+        <button class="ui-button ghost delete-run" data-run-id="${escapeHtml(run.id || '')}">Delete</button>
+      </div>
     `;
     runsEl.appendChild(row);
   });
@@ -499,6 +504,7 @@ function renderPromptList(prompts) {
       <div class="prompt-card-actions">
         <button class="ui-button" data-action="load" data-id="${prompt.id}">Load</button>
         <button class="ui-button primary" data-action="run" data-id="${prompt.id}">Run</button>
+        <button class="ui-button ghost" data-action="delete" data-id="${prompt.id}">Delete</button>
       </div>
     `;
     promptListEl.appendChild(card);
@@ -747,6 +753,33 @@ if (promptListEl) {
     if (action === 'run') {
       runPrompt(promptId).catch((err) => console.error(err));
     }
+    if (action === 'delete') {
+      if (!confirm(`Delete prompt ${promptId}?`)) return;
+      fetchJSON(`/api/prompts/${promptId}`, { method: 'DELETE' })
+        .then(() => {
+          if (currentPromptId === promptId) {
+            currentPromptId = null;
+            setPromptStatus('Not saved');
+            updatePromptButton();
+          }
+          refresh();
+        })
+        .catch((err) => console.error(err));
+    }
+  });
+}
+
+if (runsEl) {
+  runsEl.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.classList.contains('delete-run')) return;
+    const runId = target.dataset.runId;
+    if (!runId) return;
+    if (!confirm(`Delete run ${runId}?`)) return;
+    fetchJSON(`/api/runs/${runId}`, { method: 'DELETE' })
+      .then(() => refresh())
+      .catch((err) => console.error(err));
   });
 }
 

@@ -130,6 +130,59 @@ class DecisionStore:
                 continue
         return runs
 
+    def delete_run(self, run_id: str) -> bool:
+        run_dir = self._runs_dir() / run_id
+        if not run_dir.exists():
+            return False
+        for path in run_dir.glob("**/*"):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+        for path in sorted(run_dir.glob("**/*"), reverse=True):
+            if path.is_dir():
+                path.rmdir()
+        run_dir.rmdir()
+        return True
+
+    def rebuild_latest(self) -> None:
+        if not self._runs_dir().exists():
+            if self._latest_path().exists():
+                self._latest_path().unlink()
+            return
+        runs = [p for p in self._runs_dir().iterdir() if p.is_dir()]
+        if not runs:
+            if self._latest_path().exists():
+                self._latest_path().unlink()
+            return
+        latest_dir = sorted(runs, reverse=True)[0]
+        path = latest_dir / "run.json"
+        if path.exists():
+            self._latest_path().parent.mkdir(parents=True, exist_ok=True)
+            self._latest_path().write_text(path.read_text())
+
+    def rebuild_prompt_latest(self, prompt_id: str) -> None:
+        prompt_latest = self._prompt_latest_path(prompt_id)
+        if not self._runs_dir().exists():
+            if prompt_latest.exists():
+                prompt_latest.unlink()
+            return
+        runs = []
+        for run_dir in sorted(self._runs_dir().iterdir(), reverse=True):
+            path = run_dir / "run.json"
+            if not path.exists():
+                continue
+            try:
+                run = json.loads(path.read_text())
+            except Exception:
+                continue
+            if (run.get("meta") or {}).get("prompt_id") == prompt_id:
+                runs.append(run)
+                break
+        if runs:
+            self._prompt_latest_dir().mkdir(parents=True, exist_ok=True)
+            prompt_latest.write_text(json.dumps(runs[0], indent=2))
+        elif prompt_latest.exists():
+            prompt_latest.unlink()
+
     def _write_run(self, run_id: str, payload: Dict[str, Any]) -> None:
         run_dir = self._runs_dir() / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
