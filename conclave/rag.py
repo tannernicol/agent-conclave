@@ -31,7 +31,11 @@ class RagClient:
     def __post_init__(self) -> None:
         if self.cache_dir is None:
             self.cache_dir = DEFAULT_CACHE_DIR
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # If cache dir isn't writable, operate in-memory only.
+            self.cache_dir = None
 
     def _record_error(self, action: str, exc: Exception) -> None:
         self.errors.append({"action": action, "error": str(exc), "time": time.time()})
@@ -41,15 +45,17 @@ class RagClient:
         self.errors.clear()
         return errors
 
-    def _load_collections_cache(self) -> list[dict] | None:
+    def _load_collections_cache(self, stale_ok: bool = False) -> list[dict] | None:
         """Load collections from disk cache if valid."""
+        if self.cache_dir is None:
+            return None
         cache_file = self.cache_dir / "rag_collections.json"
         if not cache_file.exists():
             return None
         try:
             data = json.loads(cache_file.read_text())
             cache_time = data.get("time", 0)
-            if time.time() - cache_time < self.collections_cache_ttl:
+            if stale_ok or (time.time() - cache_time < self.collections_cache_ttl):
                 return data.get("collections", [])
         except Exception:
             pass
@@ -57,6 +63,8 @@ class RagClient:
 
     def _save_collections_cache(self, collections: list[dict]) -> None:
         """Save collections to disk cache."""
+        if self.cache_dir is None:
+            return
         cache_file = self.cache_dir / "rag_collections.json"
         try:
             cache_file.write_text(json.dumps({
@@ -89,7 +97,7 @@ class RagClient:
     def collections(self) -> list[dict]:
         # Check memory cache first
         now = time.time()
-        if self._collections_cache and (now - self._collections_cache_time) < self.collections_cache_ttl:
+        if self._collections_cache_time and (now - self._collections_cache_time) < self.collections_cache_ttl:
             return self._collections_cache
 
         # Check disk cache
@@ -113,10 +121,10 @@ class RagClient:
             self._record_error("collections", exc)
             logger.warning("RAG collections fetch failed", exc_info=True)
             # Return memory cache if available, even if stale
-            if self._collections_cache:
+            if self._collections_cache_time:
                 return self._collections_cache
             # Try disk cache even if expired
-            disk_cache = self._load_collections_cache()
+            disk_cache = self._load_collections_cache(stale_ok=True)
             if disk_cache:
                 return disk_cache
             return []
