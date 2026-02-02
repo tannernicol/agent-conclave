@@ -280,6 +280,7 @@ class ConclavePipeline:
         semantic = rag_cfg.get("semantic")
         for coll in route.get("collections", []):
             rag_results.extend(self.rag.search(query, collection=coll, limit=max_per_collection, semantic=semantic))
+        rag_results = self._filter_rag_results(rag_results)
         nas_results = []
         file_results = self.rag.search_files(query, limit=10)
         if self.config.index.get("enabled", True):
@@ -358,6 +359,7 @@ class ConclavePipeline:
             required_collections=required_collections,
             domain=route.get("domain"),
             domain_paths=self.config.quality.get("domain_paths", {}),
+            collection_reliability=self.config.rag.get("collection_reliability", {}),
             user_items=user_inputs,
             source_items=source_items,
         )
@@ -444,6 +446,42 @@ class ConclavePipeline:
             seen.add(path)
             unique.append(path)
         return unique
+
+    def _filter_rag_results(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        cfg = self.config.rag
+        exclude_collections = set(cfg.get("exclude_collections", []) or [])
+        exclude_patterns = cfg.get("exclude_path_patterns", []) or []
+        min_score = float(cfg.get("min_score", 0.0))
+        min_snippet_len = int(cfg.get("min_snippet_len", 40))
+        min_filename_snippet = int(cfg.get("min_filename_snippet", 120))
+        filtered = []
+        for item in items:
+            collection = item.get("collection")
+            if collection and collection in exclude_collections:
+                continue
+            path = item.get("path") or item.get("name") or ""
+            if path:
+                for pattern in exclude_patterns:
+                    if fnmatch.fnmatch(path, pattern):
+                        break
+                else:
+                    pass
+                if any(fnmatch.fnmatch(path, pattern) for pattern in exclude_patterns):
+                    continue
+            try:
+                score_val = float(item.get("score", 0.0))
+            except Exception:
+                score_val = 0.0
+            if score_val < min_score:
+                continue
+            snippet = (item.get("snippet") or item.get("match_line") or "").strip()
+            match_type = str(item.get("match_type", "")).lower()
+            if match_type == "filename" and len(snippet) < min_filename_snippet:
+                continue
+            if len(snippet) < min_snippet_len:
+                continue
+            filtered.append(item)
+        return filtered
 
     def _read_file_excerpt(self, path: Path, max_lines: int = 120, max_chars: int = 2000) -> str:
         try:
@@ -902,6 +940,7 @@ class ConclavePipeline:
         preferred_collections: List[str] | None = None,
         domain: str | None = None,
         domain_paths: Dict[str, List[str]] | None = None,
+        collection_reliability: Dict[str, str] | None = None,
     ) -> Dict[str, Any]:
         path = item.get("path") or item.get("file_path") or item.get("name")
         title = item.get("title") or item.get("name") or (Path(path).name if path else "unknown")
@@ -933,6 +972,13 @@ class ConclavePipeline:
             signal -= 0.3
         elif ext in {".md", ".txt", ".json", ".yaml", ".yml", ".toml"}:
             signal += 0.3
+        reliability = None
+        if collection_reliability and collection:
+            reliability = str(collection_reliability.get(collection, "")).lower()
+        if reliability == "high":
+            signal += 0.2
+        elif reliability == "low":
+            signal -= 0.2
         snippet_len = len(snippet.strip())
         if match_type == "filename" and source != "user":
             signal -= 0.5
@@ -1003,22 +1049,23 @@ class ConclavePipeline:
         required_collections: List[str] | None = None,
         domain: str | None = None,
         domain_paths: Dict[str, List[str]] | None = None,
+        collection_reliability: Dict[str, str] | None = None,
         user_items: List[Dict[str, Any]] | None = None,
         source_items: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         items = []
         for item in rag:
-            items.append(self._score_item(item, "rag", preferred_collections, domain, domain_paths))
+            items.append(self._score_item(item, "rag", preferred_collections, domain, domain_paths, collection_reliability))
         for item in nas:
             enriched = self._maybe_attach_line(item)
-            items.append(self._score_item(enriched, "nas", preferred_collections, domain, domain_paths))
+            items.append(self._score_item(enriched, "nas", preferred_collections, domain, domain_paths, collection_reliability))
         if user_items:
             items.extend([
-                self._score_item(item, "user", preferred_collections, domain, domain_paths) for item in user_items
+                self._score_item(item, "user", preferred_collections, domain, domain_paths, collection_reliability) for item in user_items
             ])
         if source_items:
             items.extend([
-                self._score_item(item, "source", preferred_collections, domain, domain_paths) for item in source_items
+                self._score_item(item, "source", preferred_collections, domain, domain_paths, collection_reliability) for item in source_items
             ])
         items.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
         selected: List[Dict[str, Any]] = []

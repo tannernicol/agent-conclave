@@ -174,11 +174,30 @@ rag:
   trust_explicit_collections: true
   max_results_per_collection: 8
   prefer_non_pdf: true
-  default_collections:
+  min_score: 0.2
+  min_snippet_len: 40
+  min_filename_snippet: 120
+  exclude_collections:
     - homelab-rag
     - claude-context
-    - notes
     - prompts
+  exclude_path_patterns:
+    - "**/Bookmarks*"
+    - "**/bookmarks/**"
+    - "**/audit-*.json"
+    - "**/audit*.json"
+    - "**/history.jsonl"
+  collection_reliability:
+    tax-rag: high
+    tax-data: high
+    health-rag: high
+    health-data: high
+    money-api: high
+    bounty-rag: medium
+    security-library: medium
+    survival-library: medium
+  default_collections:
+    - notes
   domain_collections:
     tax: [tax-rag, tax-data, homelab-rag]
     health: [health-rag, health-data, homelab-rag]
