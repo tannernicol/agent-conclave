@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 import re
 import sys
 import textwrap
@@ -82,7 +82,7 @@ def apply_schedule(
     dry_run: bool = False,
     validate: bool = True,
     disable_legacy: bool = False,
-) -> list[ScheduleUnit]:
+) -> dict[str, Any]:
     unit_dir = unit_dir.expanduser()
     unit_dir.mkdir(parents=True, exist_ok=True)
     python_path = python_path or sys.executable

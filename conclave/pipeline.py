@@ -12,6 +12,7 @@ from conclave.config import Config
 from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.models.ollama import OllamaClient
+from conclave.models.cli import CliClient
 from conclave.rag import RagClient, NasIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
@@ -32,6 +33,7 @@ class ConclavePipeline:
         self.registry = ModelRegistry.from_config(config.models)
         self.planner = Planner.from_config(config.planner)
         self.ollama = OllamaClient()
+        self.cli = CliClient()
         self.rag = RagClient(config.rag.get("base_url", "http://localhost:8091"))
         sources_cfg = config.sources
         self.health_source = HealthDashboardClient(
@@ -162,6 +164,7 @@ class ConclavePipeline:
         calibration = self.config.calibration
         if not calibration.get("enabled", True):
             return
+        providers = calibration.get("providers") or ["ollama"]
         max_seconds = float(calibration.get("max_seconds", 20))
         prompt = calibration.get("ping_prompt", "Return only: OK")
         start = time.perf_counter()
@@ -169,10 +172,16 @@ class ConclavePipeline:
             if time.perf_counter() - start > max_seconds:
                 break
             model_id = card.get("id", "")
-            if not model_id.startswith("ollama:"):
+            provider = str(card.get("provider") or model_id.split(":", 1)[0])
+            if provider not in providers:
                 continue
-            model_name = model_id.split(":", 1)[1]
-            result = self.ollama.generate(model_name, prompt, temperature=0)
+            if model_id.startswith("ollama:"):
+                model_name = model_id.split(":", 1)[1]
+                result = self.ollama.generate(model_name, prompt, temperature=0)
+            elif model_id.startswith("cli:"):
+                result = self._call_cli_model(model_id, prompt, role="calibration")
+            else:
+                continue
             observation = {
                 "p50_latency_ms": round(result.duration_ms, 2),
                 "ok": result.ok,
@@ -343,7 +352,44 @@ class ConclavePipeline:
             if run_id:
                 self.store.append_event(run_id, {"phase": "model", **payload})
             return result.text
+        if model_id.startswith("cli:"):
+            result = self._call_cli_model(model_id, prompt, role=role)
+            self._record_model_observation(model_id, result)
+            audit = self._audit
+            run_id = self._run_id
+            payload = {
+                "role": role,
+                "model_id": model_id,
+                "ok": result.ok,
+                "duration_ms": round(result.duration_ms, 2),
+                "error": result.error,
+                "stderr": result.stderr,
+            }
+            if audit:
+                audit.log("model.call", payload)
+            if run_id:
+                self.store.append_event(run_id, {"phase": "model", **payload})
+            return result.text
         return ""
+
+    def _call_cli_model(self, model_id: str, prompt: str, role: Optional[str] = None) -> Any:
+        card = self.registry.get_model(model_id) or {}
+        command = card.get("command") or []
+        prompt_mode = card.get("prompt_mode", "arg")
+        stdin_flag = card.get("stdin_flag")
+        timeout_seconds = int(card.get("timeout_seconds", 90))
+        env = card.get("env") or {}
+        cwd = card.get("cwd")
+        result = self.cli.run(
+            command=list(command),
+            prompt=prompt,
+            prompt_mode=str(prompt_mode),
+            stdin_flag=str(stdin_flag) if stdin_flag else None,
+            timeout_seconds=timeout_seconds,
+            cwd=str(cwd) if cwd else None,
+            env=env,
+        )
+        return result
 
     def _record_model_observation(self, model_id: str, result: Any) -> None:
         card = self.registry.get_model(model_id) or {}

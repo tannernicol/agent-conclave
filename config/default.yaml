@@ -75,10 +75,80 @@ models:
         p50_latency_ms: 1300
         p95_latency_ms: 4500
         tokens_per_sec: 32
+    - id: cli:claude
+      provider: cli
+      kind: external
+      command:
+        - /home/tanner/.local/bin/claude
+        - --print
+        - --output-format
+        - text
+        - --no-session-persistence
+      prompt_mode: arg
+      timeout_seconds: 120
+      env:
+        NO_COLOR: "1"
+      capabilities:
+        text_reasoning: true
+        code_generation: medium
+        code_review: high
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: high
+      constraints:
+        max_context_tokens: 200000
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 2500
+        p95_latency_ms: 8000
+        tokens_per_sec: 25
+    - id: cli:codex
+      provider: cli
+      kind: external
+      command:
+        - /usr/local/bin/codex
+        - exec
+        - --sandbox
+        - read-only
+        - --oss
+        - --local-provider
+        - ollama
+      prompt_mode: stdin
+      stdin_flag: "-"
+      timeout_seconds: 120
+      env:
+        NO_COLOR: "1"
+      capabilities:
+        text_reasoning: true
+        code_generation: high
+        code_review: high
+        tool_use: true
+        image_generation: false
+        image_understanding: none
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 32768
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 3000
+        p95_latency_ms: 10000
+        tokens_per_sec: 20
 
 planner:
   prefer_local: true
   prefer_best: false
+  role_overrides:
+    reasoner: cli:codex
+    critic: cli:claude
   weights:
     latency: 0.35
     reliability: 0.25
@@ -162,6 +232,8 @@ index:
 
 calibration:
   enabled: true
+  providers:
+    - ollama
   max_seconds: 20
   ping_prompt: "Return only: OK"
 

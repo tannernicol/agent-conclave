@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
+from datetime import datetime
 import json
 import time
 import uuid
@@ -32,7 +33,7 @@ class DecisionStore:
         run_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "id": run_id,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "status": "running",
             "query": query,
             "meta": meta or {},
@@ -44,7 +45,7 @@ class DecisionStore:
     def append_event(self, run_id: str, event: Dict[str, Any]) -> None:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
             run.setdefault("events", []).append({
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
                 **event,
             })
             return run
@@ -61,7 +62,7 @@ class DecisionStore:
     def finalize_run(self, run_id: str, consensus: Dict[str, Any], artifacts: Dict[str, Any]) -> None:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
             run["status"] = "complete"
-            run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            run["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
             run["consensus"] = consensus
             run["artifacts"] = artifacts
             return run
@@ -75,7 +76,7 @@ class DecisionStore:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
             run["status"] = "failed"
             run["error"] = error
-            run["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            run["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
             return run
         self._locked_update(run_id, _update)
 

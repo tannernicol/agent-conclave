@@ -21,6 +21,7 @@ class Planner:
     role_affinity: Dict[str, Dict[str, float]]
     prefer_local: bool = True
     prefer_best: bool = False
+    role_overrides: Dict[str, str] | None = None
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "Planner":
@@ -29,6 +30,7 @@ class Planner:
             role_affinity=config.get("role_affinity", {}),
             prefer_local=bool(config.get("prefer_local", True)),
             prefer_best=bool(config.get("prefer_best", False)),
+            role_overrides=config.get("role_overrides", {}),
         )
 
     def choose_models_for_roles(
@@ -50,10 +52,42 @@ class Planner:
         assignments: Dict[str, str] = {}
         rationale: Dict[str, Any] = {}
         constraints = role_constraints or {}
+        registry_map = {card.get("id"): card for card in registry if card.get("id")}
         for role in roles:
             candidates = []
             best_model = None
             best_score = -1.0
+            override = None
+            if self.role_overrides:
+                override = self.role_overrides.get(role)
+            if override:
+                card = registry_map.get(override)
+                if card:
+                    ok, reason = self._check_requirements(role, card, constraints.get(role, {}))
+                    candidates.append({
+                        "id": card.get("id"),
+                        "eligible": ok,
+                        "score": None,
+                        "details": {"override": True, "reason": reason or "ok"},
+                    })
+                    if ok:
+                        assignments[role] = card.get("id")
+                        rationale[role] = {
+                            "selected": card.get("id"),
+                            "weights": self.weights,
+                            "preferences": {
+                                "prefer_local": self.prefer_local,
+                                "prefer_best": self.prefer_best,
+                            },
+                            "candidates": candidates,
+                        }
+                        continue
+                else:
+                    candidates.append({
+                        "id": override,
+                        "eligible": False,
+                        "reason": "override missing from registry",
+                    })
             for card in registry:
                 ok, reason = self._check_requirements(role, card, constraints.get(role, {}))
                 if not ok:

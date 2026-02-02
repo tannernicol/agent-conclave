@@ -19,6 +19,17 @@ def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2))
 
 
+def _fail_on_insufficient(args: argparse.Namespace, config: Any) -> tuple[bool, int]:
+    exit_code = int(config.quality.get("strict_exit_code", 0))
+    if args.no_fail_on_insufficient:
+        return False, exit_code
+    if args.fail_on_insufficient:
+        return True, exit_code
+    if bool(config.quality.get("strict", False)) and exit_code:
+        return True, exit_code
+    return False, exit_code
+
+
 def cmd_models(args: argparse.Namespace) -> None:
     config = get_config()
     registry = ModelRegistry.from_config(config.models)
@@ -49,10 +60,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         meta["input_path"] = args.input_file
     result = pipeline.run(args.query, collections=args.collection, meta=meta if meta else None)
     _print({"run_id": result.run_id, "consensus": result.consensus})
-    exit_code = int(config.quality.get("strict_exit_code", 0))
-    if args.no_fail_on_insufficient:
-        return
-    fail_on = args.fail_on_insufficient or (bool(config.quality.get("strict", False)) and exit_code)
+    fail_on, exit_code = _fail_on_insufficient(args, config)
     if fail_on and result.consensus.get("insufficient_evidence"):
         raise SystemExit(exit_code or 2)
 
@@ -69,19 +77,15 @@ def cmd_runs(args: argparse.Namespace) -> None:
 def cmd_reconcile(args: argparse.Namespace) -> None:
     config = get_config()
     pipeline = ConclavePipeline(config)
-    exit_code = int(config.quality.get("strict_exit_code", 0))
+    fail_on, exit_code = _fail_on_insufficient(args, config)
     def _should_fail(consensus: dict) -> bool:
-        if args.no_fail_on_insufficient:
-            return False
-        if args.fail_on_insufficient:
-            return True
-        return False
+        return bool(fail_on and consensus.get("insufficient_evidence"))
     if args.topic == "all":
         results = []
         for item in config.topics:
             result = pipeline.run(item.get("query", ""), collections=item.get("collections"), meta={"topic": item.get("id")})
             results.append({"topic": item.get("id"), "run_id": result.run_id, "consensus": result.consensus})
-            if _should_fail(result.consensus) and result.consensus.get("insufficient_evidence"):
+            if _should_fail(result.consensus):
                 _print({"results": results, "error": "insufficient_evidence"})
                 raise SystemExit(exit_code or 2)
         _print({"results": results})
@@ -95,7 +99,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
         raise SystemExit(f"Unknown topic: {args.topic}")
     result = pipeline.run(topic.get("query", ""), collections=topic.get("collections"), meta={"topic": args.topic})
     _print({"run_id": result.run_id, "consensus": result.consensus})
-    if _should_fail(result.consensus) and result.consensus.get("insufficient_evidence"):
+    if _should_fail(result.consensus):
         raise SystemExit(exit_code or 2)
 
 

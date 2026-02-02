@@ -4,51 +4,66 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Conclave</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/homelab-ui.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main class="app">
-      <header class="hero">
+    <header class="app-header">
+      <div class="brand">
         <div class="sigil">C</div>
         <div>
-          <h1>Conclave</h1>
-          <p>Locked doors. Honest debate. White smoke.</p>
+          <div class="brand-title">Conclave</div>
+          <div class="brand-sub ui-muted">Decision pipeline dashboard.</div>
         </div>
-      </header>
+      </div>
+      <div class="header-actions">
+        <div class="status-pill ui-mono" id="status">Idle</div>
+        <div class="smoke-indicator" id="smoke" aria-hidden="true"></div>
+        <button type="button" class="ui-button" id="rerun-latest">Re-run Latest</button>
+      </div>
+    </header>
 
-      <section class="panel">
-        <form id="query-form">
-          <label for="query">Pose a question</label>
-          <textarea id="query" name="query" rows="3" placeholder="Ask about tax, health, or a big decision..."></textarea>
-          <label for="input-title">Input title (saved to Markdown)</label>
+    <main class="app">
+      <section class="ui-card panel input-panel">
+        <h2 class="panel-title">New Prompt</h2>
+        <form id="query-form" class="form-grid">
+          <label for="query">Prompt</label>
+          <textarea id="query" name="query" rows="3" placeholder="Ask about tax, health, money, or a big decision..."></textarea>
+          <label for="input-title">Title (saved to Markdown)</label>
           <input id="input-title" name="input-title" type="text" placeholder="e.g., 2026 Health Action Plan Notes" />
           <label for="input-notes">Supporting notes (saved)</label>
           <textarea id="input-notes" name="input-notes" rows="6" placeholder="Paste notes or context to persist. These will be saved and used as evidence."></textarea>
           <div class="actions">
-            <button type="submit">Summon the Cardinals</button>
-            <button type="button" id="rerun-latest">Re-run Latest</button>
+            <button type="submit" class="ui-button primary">Run</button>
+            <button type="button" class="ui-button ghost" id="clear-form">Clear</button>
           </div>
         </form>
       </section>
 
-      <section class="state">
-        <div class="door" id="door">
-          <div class="door-panel"></div>
-          <div class="door-handle"></div>
-          <div class="seal" id="seal">SEALED</div>
-          <div class="smoke" id="smoke"></div>
+      <section class="ui-card panel latest-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Latest Decision</h2>
+          <div class="panel-meta ui-mono" id="latest-time">—</div>
         </div>
-        <div class="status" id="status">Awaiting deliberation.</div>
+        <div id="latest" class="markdown">No consensus yet.</div>
       </section>
 
-      <section class="panel result">
-        <h2>Latest Pope</h2>
-        <div id="latest" class="latest">No consensus yet.</div>
-      </section>
-
-      <section class="panel timeline">
-        <h2>Recent Runs</h2>
-        <ul id="runs"></ul>
+      <section class="ui-card panel runs-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Decision Log</h2>
+          <div class="panel-meta ui-mono">Rows show prompt, logs, and output.</div>
+        </div>
+        <div class="table">
+          <div class="table-head">
+            <div>Title</div>
+            <div>Prompt</div>
+            <div>Process Logs</div>
+            <div>Output</div>
+            <div>Completed</div>
+          </div>
+          <div class="table-body" id="run-rows"></div>
+        </div>
       </section>
     </main>
 

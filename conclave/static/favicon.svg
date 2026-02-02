@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Conclave">
+  <rect width="120" height="120" rx="24" fill="#0f172a"/>
+  <circle cx="60" cy="56" r="36" fill="#0f766e" opacity="0.22"/>
+  <path d="M84 62c-6.5 12-18 20-30 20-16.5 0-30-13.5-30-30 0-13 8-24 20-29"
+        fill="none" stroke="#5eead4" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="74" cy="40" r="6" fill="#94a3b8"/>
+</svg>
