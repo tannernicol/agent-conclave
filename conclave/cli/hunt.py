@@ -327,6 +327,38 @@ class HuntCLI:
         self.state.started_at = datetime.now().isoformat()
         self.state.save()
 
+        targets = self._discover_targets()
+
+        if not targets:
+            logger.error("No targets found matching criteria.")
+            self.state.phase = "idle"
+            self.state.save()
+            return
+
+        # Phase 2: Interactive selection
+        target = self._select_target(targets)
+
+        if not target:
+            logger.info("No target selected. Exiting.")
+            self.state.phase = "idle"
+            self.state.save()
+            return
+
+        if self.args.dry_run:
+            logger.info("Dry run - stopping before setup.")
+            self.state.phase = "idle"
+            self.state.save()
+            return
+
+        self.state.target = asdict(target)
+        self.state.save()
+
+        # Phase 3: Setup
+        self._setup_target(target)
+
+        # Phase 4: Hunt
+        self._hunt_target(target)
+
     def _maybe_refresh_targets(self):
         """Refresh platform targets if they're stale."""
         platforms_dir = BOUNTY_RECON_DIR / "platform-targets"
@@ -364,38 +396,6 @@ class HuntCLI:
                 print("  ✓ Platform targets refreshed")
         except Exception as e:
             logger.warning(f"Failed to refresh targets: {e}")
-
-        targets = self._discover_targets()
-
-        if not targets:
-            logger.error("No targets found matching criteria.")
-            self.state.phase = "idle"
-            self.state.save()
-            return
-
-        # Phase 2: Interactive selection
-        target = self._select_target(targets)
-
-        if not target:
-            logger.info("No target selected. Exiting.")
-            self.state.phase = "idle"
-            self.state.save()
-            return
-
-        if self.args.dry_run:
-            logger.info("Dry run - stopping before setup.")
-            self.state.phase = "idle"
-            self.state.save()
-            return
-
-        self.state.target = asdict(target)
-        self.state.save()
-
-        # Phase 3: Setup
-        self._setup_target(target)
-
-        # Phase 4: Hunt
-        self._hunt_target(target)
 
     def _discover_targets(self) -> List[Target]:
         """Discover fresh targets from bounty platforms."""
