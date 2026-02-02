@@ -476,7 +476,10 @@ function renderRuns(runs) {
       <div class="cell markdown clamp-3">${renderRecommendations(output)}</div>
       <div class="cell cell-time ui-mono">
         ${formatTime(run.completed_at || run.created_at)}
-        <button class="ui-button ghost delete-run" data-run-id="${escapeHtml(run.id || '')}">Delete</button>
+        <div class="run-actions">
+          <button class="ui-button ghost rerun-run" data-run-id="${escapeHtml(run.id || '')}">Re-run</button>
+          <button class="ui-button ghost delete-run" data-run-id="${escapeHtml(run.id || '')}">Delete</button>
+        </div>
       </div>
     `;
     runsEl.appendChild(row);
@@ -773,9 +776,24 @@ if (runsEl) {
   runsEl.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
-    if (!target.classList.contains('delete-run')) return;
     const runId = target.dataset.runId;
     if (!runId) return;
+    if (target.classList.contains('rerun-run')) {
+      setStatus('Running...');
+      setSmoke(false);
+      fetchJSON(`/api/runs/${runId}/rerun`, { method: 'POST' })
+        .then((resp) => {
+          if (resp.run_id) {
+            currentRunId = resp.run_id;
+            pollRun(currentRunId);
+          } else {
+            refresh();
+          }
+        })
+        .catch((err) => console.error(err));
+      return;
+    }
+    if (!target.classList.contains('delete-run')) return;
     if (!confirm(`Delete run ${runId}?`)) return;
     fetchJSON(`/api/runs/${runId}`, { method: 'DELETE' })
       .then(() => refresh())

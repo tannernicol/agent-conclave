@@ -143,6 +143,29 @@ async def run_detail_api(run_id: str, request: Request):
     return run
 
 
+@app.post("/api/runs/{run_id}/rerun")
+async def run_rerun_api(run_id: str, background: BackgroundTasks, request: Request):
+    store = request.app.state.store
+    run = store.get_run(run_id)
+    if not run:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    query = run.get("query", "")
+    if not query:
+        return JSONResponse({"error": "query missing"}, status_code=400)
+    meta = dict(run.get("meta") or {})
+    meta["source"] = meta.get("source", "api")
+    collections = None
+    artifacts = run.get("artifacts") or {}
+    route = artifacts.get("route") or {}
+    if route.get("collections"):
+        collections = route.get("collections")
+    new_run_id = store.create_run(query, meta=meta)
+    def _task():
+        request.app.state.pipeline.run(query, collections=collections, run_id=new_run_id, meta=meta)
+    background.add_task(_task)
+    return {"ok": True, "run_id": new_run_id}
+
+
 @app.delete("/api/runs/{run_id}")
 async def run_delete_api(run_id: str, request: Request):
     store = request.app.state.store
