@@ -143,6 +143,11 @@ body {
   margin-bottom: 10px;
 }
 
+.latest-note {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
 .form-grid {
   display: grid;
   gap: 12px;
@@ -256,6 +261,20 @@ textarea {
   font-size: 11px;
 }
 
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .cell-prompt {
   color: var(--ui-muted);
 }
@@ -294,6 +313,29 @@ textarea {
   max-height: 160px;
   overflow: auto;
   font-size: 11px;
+}
+
+.log-detail summary {
+  cursor: pointer;
+  color: var(--ui-accent);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.log-detail[open] summary {
+  margin-bottom: 10px;
+}
+
+.log-detail-body {
+  display: grid;
+  gap: 10px;
+}
+
+.log-section-title {
+  font-size: 11px;
+  color: var(--ui-muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .output-list {

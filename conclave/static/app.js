@@ -240,13 +240,25 @@ function renderLogs(events, outputText) {
   if (!events || !events.length) {
     return '<div class="empty-state">No logs yet.</div>';
   }
-  const items = events.slice(-10).map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
-  let detail = '';
-  if (outputText) {
-    const detailText = outputText.length > 1200 ? `${outputText.slice(0, 1200)}…` : outputText;
-    detail = `<div class="log-detail markdown">${renderMarkdown(detailText)}</div>`;
-  }
-  return `<ul class="log-list">${items}</ul>${detail}`;
+  const preview = events.slice(-4).map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
+  const full = events.map((event) => `<li>${summarizeEvent(event)}</li>`).join('');
+  const outputBody = outputText ? renderMarkdown(outputText) : '<div class="empty-state">No output.</div>';
+  return `
+    <ul class="log-list">${preview}</ul>
+    <details class="log-detail">
+      <summary>View full log + output</summary>
+      <div class="log-detail-body">
+        <div>
+          <div class="log-section-title">Full Log</div>
+          <ul class="log-list">${full}</ul>
+        </div>
+        <div>
+          <div class="log-section-title">Full Output</div>
+          <div class="markdown">${outputBody}</div>
+        </div>
+      </div>
+    </details>
+  `;
 }
 
 function resolveTitle(run) {
@@ -292,11 +304,11 @@ function renderRuns(runs) {
         <div class="ui-dim ui-mono run-id">${escapeHtml(run.id || '')}</div>
       </div>
       <div class="cell cell-prompt">
-        ${escapeHtml(run.query || '')}
+        <div class="clamp-2">${escapeHtml(run.query || '')}</div>
         <div class="prompt-meta ui-mono">Input: ${escapeHtml(inputInfo)}</div>
       </div>
       <div class="cell">${renderLogs(run.events || [], output)}</div>
-      <div class="cell markdown">${renderRecommendations(output)}</div>
+      <div class="cell markdown clamp-3">${renderRecommendations(output)}</div>
       <div class="cell cell-time ui-mono">${formatTime(run.completed_at || run.created_at)}</div>
     `;
     runsEl.appendChild(row);
