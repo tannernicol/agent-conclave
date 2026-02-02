@@ -1,7 +1,7 @@
 """RAG + NAS indexing integration."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 import fnmatch
@@ -14,30 +14,57 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Default cache directory
+DEFAULT_CACHE_DIR = Path.home() / ".conclave" / "cache"
+
 
 @dataclass
 class RagClient:
     base_url: str
-    errors: list[dict] | None = None
-    _collections_cache: list[dict] | None = None
+    timeout: float = 15.0  # Increased from 10s
+    collections_cache_ttl: float = 3600.0  # 1 hour
+    cache_dir: Path | None = None
+    errors: list[dict] = field(default_factory=list)
+    _collections_cache: list[dict] = field(default_factory=list)
+    _collections_cache_time: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.errors is None:
-            self.errors = []
-        if self._collections_cache is None:
-            self._collections_cache = []
+        if self.cache_dir is None:
+            self.cache_dir = DEFAULT_CACHE_DIR
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _record_error(self, action: str, exc: Exception) -> None:
-        if self.errors is None:
-            self.errors = []
-        self.errors.append({"action": action, "error": str(exc)})
+        self.errors.append({"action": action, "error": str(exc), "time": time.time()})
 
     def drain_errors(self) -> list[dict]:
-        if self.errors is None:
-            return []
         errors = list(self.errors)
         self.errors.clear()
         return errors
+
+    def _load_collections_cache(self) -> list[dict] | None:
+        """Load collections from disk cache if valid."""
+        cache_file = self.cache_dir / "rag_collections.json"
+        if not cache_file.exists():
+            return None
+        try:
+            data = json.loads(cache_file.read_text())
+            cache_time = data.get("time", 0)
+            if time.time() - cache_time < self.collections_cache_ttl:
+                return data.get("collections", [])
+        except Exception:
+            pass
+        return None
+
+    def _save_collections_cache(self, collections: list[dict]) -> None:
+        """Save collections to disk cache."""
+        cache_file = self.cache_dir / "rag_collections.json"
+        try:
+            cache_file.write_text(json.dumps({
+                "time": time.time(),
+                "collections": collections,
+            }))
+        except Exception as e:
+            logger.debug(f"Failed to save collections cache: {e}")
 
     def search(self, query: str, collection: Optional[str] = None, limit: int = 20, semantic: bool | None = None) -> list[dict]:
         params = {"q": query, "limit": limit}
@@ -46,41 +73,80 @@ class RagClient:
         if semantic is not None:
             params["semantic"] = str(semantic).lower()
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=self.timeout) as client:
                 resp = client.get(f"{self.base_url}/api/rag/search", params=params)
                 resp.raise_for_status()
                 return resp.json().get("results", [])
+        except httpx.TimeoutException as exc:
+            self._record_error(f"search:{collection or 'all'}", exc)
+            logger.warning(f"RAG search timed out after {self.timeout}s for collection={collection}")
+            return []
         except Exception as exc:
-            self._record_error("search", exc)
+            self._record_error(f"search:{collection or 'all'}", exc)
             logger.warning("RAG search failed", exc_info=True)
             return []
 
     def collections(self) -> list[dict]:
+        # Check memory cache first
+        now = time.time()
+        if self._collections_cache and (now - self._collections_cache_time) < self.collections_cache_ttl:
+            return self._collections_cache
+
+        # Check disk cache
+        disk_cache = self._load_collections_cache()
+        if disk_cache:
+            self._collections_cache = disk_cache
+            self._collections_cache_time = now
+            return disk_cache
+
+        # Fetch from server
         try:
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=10.0) as client:
                 resp = client.get(f"{self.base_url}/api/rag/collections")
                 resp.raise_for_status()
                 collections = resp.json().get("collections", [])
                 self._collections_cache = collections
+                self._collections_cache_time = now
+                self._save_collections_cache(collections)
                 return collections
         except Exception as exc:
             self._record_error("collections", exc)
             logger.warning("RAG collections fetch failed", exc_info=True)
-            return self._collections_cache or []
+            # Return memory cache if available, even if stale
+            if self._collections_cache:
+                return self._collections_cache
+            # Try disk cache even if expired
+            disk_cache = self._load_collections_cache()
+            if disk_cache:
+                return disk_cache
+            return []
 
     def search_files(self, query: str, limit: int = 20, extension: Optional[str] = None) -> list[dict]:
         params = {"q": query, "limit": limit}
         if extension:
             params["extension"] = extension
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=self.timeout) as client:
                 resp = client.get(f"{self.base_url}/api/search/files", params=params)
                 resp.raise_for_status()
                 return resp.json().get("results", [])
+        except httpx.TimeoutException as exc:
+            self._record_error("search_files", exc)
+            logger.warning(f"RAG file search timed out after {self.timeout}s")
+            return []
         except Exception as exc:
             self._record_error("search_files", exc)
             logger.warning("RAG file search failed", exc_info=True)
             return []
+
+    def health_check(self) -> bool:
+        """Check if RAG server is reachable."""
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(f"{self.base_url}/health")
+                return resp.status_code == 200
+        except Exception:
+            return False
 
 
 class NasIndex:

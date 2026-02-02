@@ -28,7 +28,8 @@ def load_config() -> Dict[str, Any]:
     if USER_CONFIG_PATH.exists():
         override = yaml.safe_load(USER_CONFIG_PATH.read_text()) or {}
         data = _deep_merge(data, override)
-    # Environment overrides
+
+    # Environment overrides - Server
     host = os.getenv("CONCLAVE_HOST")
     port = os.getenv("CONCLAVE_PORT")
     if host:
@@ -38,6 +39,40 @@ def load_config() -> Dict[str, Any]:
             data.setdefault("server", {})["port"] = int(port)
         except ValueError:
             pass
+
+    # Environment overrides - Data directory
+    data_dir = os.getenv("CONCLAVE_DATA_DIR")
+    if data_dir:
+        data["data_dir"] = data_dir
+
+    # Environment overrides - RAG
+    rag_url = os.getenv("CONCLAVE_RAG_URL")
+    if rag_url:
+        data.setdefault("rag", {})["base_url"] = rag_url
+
+    # Environment overrides - Sources
+    health_url = os.getenv("CONCLAVE_HEALTH_URL")
+    money_url = os.getenv("CONCLAVE_MONEY_URL")
+    if health_url:
+        data.setdefault("sources", {})["health_dashboard_url"] = health_url
+    if money_url:
+        data.setdefault("sources", {})["money_api_url"] = money_url
+
+    # Environment overrides - MCP config path
+    mcp_config = os.getenv("CONCLAVE_MCP_CONFIG")
+    if mcp_config:
+        data["mcp_config_path"] = mcp_config
+
+    # Environment overrides - Quality settings
+    strict_mode = os.getenv("CONCLAVE_STRICT")
+    if strict_mode is not None:
+        data.setdefault("quality", {})["strict"] = strict_mode.lower() in ("true", "1", "yes")
+
+    # Environment overrides - Calibration
+    calibration_enabled = os.getenv("CONCLAVE_CALIBRATION")
+    if calibration_enabled is not None:
+        data.setdefault("calibration", {})["enabled"] = calibration_enabled.lower() in ("true", "1", "yes")
+
     return data
 
 
@@ -88,6 +123,11 @@ class Config:
     @property
     def deliberation(self) -> Dict[str, Any]:
         return self.raw.get("deliberation", {})
+
+    @property
+    def mcp_config_path(self) -> Path | None:
+        path = self.raw.get("mcp_config_path")
+        return Path(path) if path else None
 
 
 def get_config() -> Config:
