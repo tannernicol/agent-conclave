@@ -237,6 +237,10 @@ calibration:
   max_seconds: 20
   ping_prompt: "Return only: OK"
 
+deliberation:
+  max_rounds: 3
+  require_agreement: true
+
 quality:
   strict: true
   min_evidence: 2

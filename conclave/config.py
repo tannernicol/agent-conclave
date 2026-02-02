@@ -85,6 +85,10 @@ class Config:
     def topics(self) -> list[dict]:
         return self.raw.get("topics", [])
 
+    @property
+    def deliberation(self) -> Dict[str, Any]:
+        return self.raw.get("deliberation", {})
+
 
 def get_config() -> Config:
     return Config(load_config())

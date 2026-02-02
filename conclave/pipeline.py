@@ -126,11 +126,13 @@ class ConclavePipeline:
 
             self.store.append_event(run_id, {"phase": "deliberate", "status": "start"})
             deliberation = self._deliberate(query, context, route)
-            self.store.append_event(run_id, {"phase": "deliberate", "status": "done"})
+            self.store.append_event(run_id, {"phase": "deliberate", "status": "done", "agreement": deliberation.get("agreement")})
             audit.log("deliberate.complete", {
                 "reasoner": deliberation.get("reasoner", ""),
                 "critic": deliberation.get("critic", ""),
                 "disagreements": deliberation.get("disagreements", []),
+                "rounds": deliberation.get("rounds", []),
+                "agreement": deliberation.get("agreement"),
             })
 
             consensus = self._summarize(query, context, deliberation, route, quality)
@@ -274,25 +276,65 @@ class ConclavePipeline:
         plan = route.get("plan", {})
         reasoner_model = plan.get("reasoner") or next(iter(plan.values()), None)
         critic_model = plan.get("critic") or reasoner_model
-
+        config = self.config.raw.get("deliberation", {})
+        max_rounds = int(config.get("max_rounds", 3))
+        require_agreement = bool(config.get("require_agreement", True))
         context_blob = self._format_context(context)
-        analysis_prompt = (
-            "You are the reasoner. Provide a careful analysis and propose a decision.\n\n"
-            f"Question: {query}\n\nContext:\n{context_blob}\n"
-        )
-        reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner")
+        rounds = []
+        reasoner_out = ""
+        critic_out = ""
+        agreement = False
 
-        critic_prompt = (
-            "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
-            "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\n- ...\n\n"
-            f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
-        )
-        critic_out = self._call_model(critic_model, critic_prompt, role="critic")
+        for round_idx in range(1, max_rounds + 1):
+            analysis_prompt = (
+                "You are the reasoner. Provide a careful analysis and propose a decision.\n\n"
+                f"Question: {query}\n\nContext:\n{context_blob}\n"
+            )
+            if round_idx > 1:
+                analysis_prompt = (
+                    "You are the reasoner. Revise the decision to address the critic's feedback.\n\n"
+                    f"Question: {query}\n\nContext:\n{context_blob}\n\n"
+                    f"Previous draft:\n{reasoner_out}\n\n"
+                    f"Critic feedback:\n{critic_out}\n"
+                )
+            reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner")
+
+            critic_prompt = (
+                "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
+                "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
+                f"Question: {query}\n\nReasoner draft:\n{reasoner_out}\n"
+            )
+            critic_out = self._call_model(critic_model, critic_prompt, role="critic")
+            agreement = self._critic_agrees(critic_out)
+            round_entry = {
+                "round": round_idx,
+                "agreement": agreement,
+                "disagreements": self._extract_disagreements(critic_out),
+            }
+            rounds.append(round_entry)
+            if self._run_id:
+                self.store.append_event(self._run_id, {"phase": "deliberate", **round_entry})
+            if agreement or not require_agreement:
+                break
+
         return {
             "reasoner": reasoner_out,
             "critic": critic_out,
             "disagreements": self._extract_disagreements(critic_out),
+            "rounds": rounds,
+            "agreement": agreement,
         }
+
+    def _critic_agrees(self, critic: str) -> bool:
+        lower = critic.lower()
+        for line in critic.splitlines():
+            if "verdict" in line.lower():
+                verdict = line.split(":")[-1].strip().lower()
+                if verdict in {"agree", "agreed", "yes", "accept", "approved"}:
+                    return True
+                if verdict in {"disagree", "no", "reject"}:
+                    return False
+        return "verdict" in lower and "agree" in lower and "disagree" not in lower
 
     def _summarize(self, query: str, context: Dict[str, Any], deliberation: Dict[str, Any], route: Dict[str, Any], quality: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})
