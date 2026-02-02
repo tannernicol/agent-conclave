@@ -350,7 +350,13 @@ class HuntCLI:
             self.state.save()
             return
 
+        # Reset state for new target
         self.state.target = asdict(target)
+        self.state.hunt_plan = []  # Will be regenerated
+        self.state.current_hunt_index = 0
+        self.state.findings = []
+        self.state.tokens_used = 0
+        self.state.time_elapsed_seconds = 0
         self.state.save()
 
         # Phase 3: Setup
@@ -833,6 +839,9 @@ Contest details fetched from: {target.url}
                 last_checkpoint = time.time()
                 print(f"  📌 Checkpoint saved")
 
+            # Show real-time status update
+            self._print_status_line()
+
             # Execute current hunt step
             step = self.state.hunt_plan[self.state.current_hunt_index]
             print(f"\n[{self.state.current_hunt_index + 1}/{len(self.state.hunt_plan)}] {step}")
@@ -865,6 +874,18 @@ Contest details fetched from: {target.url}
 
         # Hunt complete
         self._complete_hunt(target, target_dir)
+
+    def _print_status_line(self):
+        """Print real-time status update."""
+        tokens = self.token_budget.status()
+        time_status = self.time_budget.status()
+        findings_count = len(self.state.findings)
+        step_num = self.state.current_hunt_index + 1
+        total_steps = len(self.state.hunt_plan)
+
+        # Use ANSI escape codes for in-place update
+        status = f"\r📊 Tokens: {tokens} | Time: {time_status} | Findings: {findings_count} | Step: {step_num}/{total_steps}"
+        print(status, end="", flush=True)
 
     def _generate_hunt_plan(self, target: Target) -> List[str]:
         """Generate a hunt plan based on target characteristics."""
@@ -907,16 +928,203 @@ Contest details fetched from: {target.url}
         """Execute a single hunt step and return any findings."""
         findings = []
 
-        # This would integrate with Conclave pipeline
-        # For now, simulate token usage and return empty findings
-        estimated_tokens = 5000  # Estimate per step
-        self.token_budget.use(estimated_tokens, "claude-sonnet")
+        # Build the analysis prompt
+        prompt = self._build_hunt_prompt(step, target, target_dir)
 
-        # TODO: Actually execute the step using Conclave
-        # result = self._run_conclave_analysis(step, target, target_dir)
-        # findings = result.get("findings", [])
+        if self.args.debug:
+            print(f"  [DEBUG] Prompt length: {len(prompt)} chars")
+            print(f"  [DEBUG] Target dir: {target_dir}")
 
-        time.sleep(0.5)  # Simulate work
+        # Try local model first (free, faster for initial triage)
+        if self.args.local_first and not getattr(self.args, 'claude_only', False):
+            if self.args.debug:
+                print(f"  [DEBUG] Trying local model first...")
+            findings = self._execute_hunt_step_ollama(step, target, target_dir)
+            # Local model handles everything when local_first is set
+            return findings
+
+        # Call Claude for analysis
+        try:
+            if self.args.debug:
+                print(f"  [DEBUG] Calling Claude CLI...")
+
+            result = subprocess.run(
+                ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
+                cwd=str(target_dir),
+                capture_output=True,
+                text=True,
+                timeout=180,  # Increased timeout
+            )
+
+            if self.args.debug:
+                print(f"  [DEBUG] Claude returned: {result.returncode}, stdout: {len(result.stdout)} chars")
+
+            if result.returncode == 0 and result.stdout:
+                # Parse findings from response
+                findings = self._parse_findings(result.stdout, step, target)
+
+                # Estimate tokens used (rough: ~4 chars per token)
+                input_tokens = len(prompt) // 4
+                output_tokens = len(result.stdout) // 4
+                self.token_budget.use(input_tokens + output_tokens, "claude-sonnet")
+
+                if self.args.debug:
+                    print(f"  [DEBUG] Parsed {len(findings)} findings")
+            else:
+                # Even on failure, count some token usage
+                self.token_budget.use(1000, "claude-sonnet")
+                if result.stderr and self.args.debug:
+                    print(f"  [DEBUG] Claude error: {result.stderr[:500]}")
+
+        except subprocess.TimeoutExpired:
+            print(f"  ⏱ Step timed out after 180s")
+            self.token_budget.use(2000, "claude-sonnet")
+        except FileNotFoundError:
+            # Claude CLI not found, fall back to ollama
+            if self.args.debug:
+                print(f"  [DEBUG] Claude not found, using Ollama...")
+            findings = self._execute_hunt_step_ollama(step, target, target_dir)
+        except Exception as e:
+            if self.args.debug:
+                print(f"  [DEBUG] Hunt step failed: {e}")
+            self.token_budget.use(500, "claude-sonnet")
+
+        return findings
+
+    def _build_hunt_prompt(self, step: str, target: Target, target_dir: Path) -> str:
+        """Build a focused prompt for the hunt step."""
+        # Find relevant code files (code is in repo/ subdir)
+        repo_dir = target_dir / "repo"
+        search_dir = repo_dir if repo_dir.exists() else target_dir
+
+        code_files = []
+        for ext in ["*.sol", "*.rs", "*.move", "*.vy"]:
+            code_files.extend(search_dir.rglob(ext))
+
+        # Limit to first 10 files to avoid huge prompts
+        code_files = sorted(code_files)[:10]
+
+        # Read handoff for context
+        handoff = ""
+        handoff_file = target_dir / "HUNT-HANDOFF.md"
+        if handoff_file.exists():
+            handoff = handoff_file.read_text()[:2000]
+
+        prompt = f"""You are a security researcher hunting for bugs in {target.name}.
+
+CONTEXT:
+{handoff}
+
+CURRENT TASK: {step}
+
+INSTRUCTIONS:
+1. Analyze the code for this specific vulnerability type
+2. If you find potential issues, output them in this EXACT format:
+
+FINDING:
+Title: <short descriptive title>
+Severity: <critical|high|medium|low>
+Confidence: <0.0-1.0>
+File: <path to file>
+Line: <line number if known>
+Description: <detailed description of the vulnerability>
+Impact: <what an attacker could do>
+Proof: <code snippet or reasoning showing the issue>
+END_FINDING
+
+3. You can output multiple findings
+4. If no issues found for this step, output: NO_FINDINGS_THIS_STEP
+5. Be thorough but avoid false positives - only report real issues
+
+Analyze the code now."""
+
+        return prompt
+
+    def _parse_findings(self, response: str, step: str, target: Target) -> List[Dict[str, Any]]:
+        """Parse findings from Claude's response."""
+        findings = []
+
+        if "NO_FINDINGS_THIS_STEP" in response:
+            return findings
+
+        # Parse FINDING blocks
+        import re
+        finding_pattern = r'FINDING:\s*\n(.*?)END_FINDING'
+        matches = re.findall(finding_pattern, response, re.DOTALL)
+
+        for match in matches:
+            finding = {
+                "step": step,
+                "target": target.name,
+                "raw": match.strip(),
+            }
+
+            # Parse structured fields
+            for field in ["Title", "Severity", "Confidence", "File", "Line", "Description", "Impact", "Proof"]:
+                pattern = rf'{field}:\s*(.+?)(?=\n[A-Z][a-z]+:|$)'
+                field_match = re.search(pattern, match, re.DOTALL)
+                if field_match:
+                    value = field_match.group(1).strip()
+                    finding[field.lower()] = value
+
+            # Convert confidence to float
+            if "confidence" in finding:
+                try:
+                    finding["confidence"] = float(finding["confidence"])
+                except:
+                    finding["confidence"] = 0.5
+
+            # Only add if we got essential fields
+            if finding.get("title") and finding.get("description"):
+                findings.append(finding)
+
+        return findings
+
+    def _execute_hunt_step_ollama(self, step: str, target: Target, target_dir: Path) -> List[Dict[str, Any]]:
+        """Use local Ollama for analysis (free, no API tokens)."""
+        findings = []
+
+        prompt = self._build_hunt_prompt(step, target, target_dir)
+
+        # Prefer bounty-specific model, fall back to general coder
+        models_to_try = ["bounty-learned", "qwen3-coder:30b", "qwen2.5-coder:7b"]
+
+        for model in models_to_try:
+            try:
+                if self.args.debug:
+                    print(f"  [DEBUG] Trying Ollama model: {model}")
+
+                result = subprocess.run(
+                    ["ollama", "run", model, prompt],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minutes for large models
+                )
+
+                if result.returncode == 0 and result.stdout:
+                    if self.args.debug:
+                        print(f"  [DEBUG] {model} response: {len(result.stdout)} chars")
+
+                    findings = self._parse_findings(result.stdout, step, target)
+                    # Local models are free
+                    self.token_budget.use(0, "local")
+
+                    if self.args.debug:
+                        print(f"  [DEBUG] Parsed {len(findings)} findings from {model}")
+                    break  # Success, don't try other models
+
+            except subprocess.TimeoutExpired:
+                if self.args.debug:
+                    print(f"  [DEBUG] {model} timed out after 300s")
+                continue
+            except FileNotFoundError:
+                if self.args.debug:
+                    print(f"  [DEBUG] Ollama not found")
+                break
+            except Exception as e:
+                if self.args.debug:
+                    print(f"  [DEBUG] {model} failed: {e}")
+                continue
 
         return findings
 
@@ -1162,6 +1370,12 @@ Examples:
                         help="Auto-select top target (no interactive prompt)")
     parser.add_argument("--target", type=str,
                         help="Directly specify target name to hunt")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug output")
+    parser.add_argument("--local-first", action="store_true", default=True,
+                        help="Try local Ollama model first (free, faster) [default: True]")
+    parser.add_argument("--claude-only", action="store_true",
+                        help="Only use Claude (skip local models)")
 
     args = parser.parse_args()
 

@@ -40,52 +40,52 @@ def scrape_sherlock() -> List[Dict[str, Any]]:
     targets = []
 
     try:
-        # Sherlock API endpoint for contests
-        data = fetch_json("https://mainnet-contest.sherlock.xyz/contests")
+        # Sherlock API - correct endpoint
+        data = fetch_json("https://audits.sherlock.xyz/api/contests")
 
-        if not data:
-            # Try alternate endpoint
-            data = fetch_json("https://audits.sherlock.xyz/api/contests")
-
-        contests = data if isinstance(data, list) else data.get("contests", [])
+        # Response has 'items' array
+        contests = data.get("items", []) if isinstance(data, dict) else data
 
         for contest in contests:
-            # Filter for active/upcoming contests
-            status = contest.get("status", "").lower()
-            if status not in ("active", "upcoming", "judging"):
+            # Filter for active/upcoming contests (API uses uppercase)
+            status = contest.get("status", "").upper()
+            if status not in ("RUNNING", "UPCOMING", "SHERLOCK_JUDGING"):
                 continue
 
-            start_date = contest.get("startDate") or contest.get("start_date", "")
-            end_date = contest.get("endDate") or contest.get("end_date", "")
+            # Timestamps are unix epoch
+            starts_at = contest.get("starts_at", 0)
+            ends_at = contest.get("ends_at", 0)
+
+            # Convert to ISO format
+            start_date = datetime.fromtimestamp(starts_at).isoformat() if starts_at else ""
+            end_date = datetime.fromtimestamp(ends_at).isoformat() if ends_at else ""
 
             # Calculate days old
             days_old = 999
-            if start_date:
-                try:
-                    start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                    days_old = (datetime.now().astimezone() - start).days
-                except:
-                    pass
+            if starts_at:
+                days_old = (datetime.now() - datetime.fromtimestamp(starts_at)).days
 
-            # Skip old contests
-            if days_old > 14:
+            # Skip old contests (unless still running)
+            if days_old > 30 and status != "RUNNING":
                 continue
 
-            prize = contest.get("prizePool") or contest.get("prize_pool", 0)
+            prize = contest.get("prize_pool") or contest.get("rewards", 0)
             if isinstance(prize, str):
                 prize = int(re.sub(r'[^\d]', '', prize) or 0)
 
+            contest_id = contest.get("id", "")
+
             target = {
-                "name": contest.get("title") or contest.get("name", "Unknown"),
+                "name": contest.get("title", "Unknown"),
                 "platform": "sherlock",
                 "bounty_usd": prize,
                 "tech_stack": _detect_tech_stack(contest),
                 "launch_date": start_date,
                 "end_date": end_date,
-                "url": f"https://audits.sherlock.xyz/contests/{contest.get('id', '')}",
-                "repo_url": contest.get("repoUrl") or contest.get("repo_url"),
-                "scope": contest.get("scope", {}).get("files", []) if isinstance(contest.get("scope"), dict) else [],
-                "tvl_usd": _parse_tvl(contest.get("tvl")),
+                "url": f"https://audits.sherlock.xyz/contests/{contest_id}",
+                "repo_url": None,  # Need to fetch from contest page
+                "scope": [],  # Need to fetch from contest page
+                "tvl_usd": 0,
                 "competition_score": _estimate_competition(contest),
             }
             targets.append(target)
