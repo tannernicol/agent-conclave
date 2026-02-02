@@ -325,6 +325,24 @@ class ConclavePipeline:
                     "collection": "bounty-target",
                     "source": "bounty-target",
                 })
+            # Pull in any local artifact paths listed in the input
+            artifact_paths = self._extract_artifact_paths(str(instructions))
+            for rel_path in artifact_paths[:8]:
+                full_path = Path(rel_path)
+                if not full_path.is_absolute() and base_dir:
+                    full_path = Path(str(base_dir)) / rel_path
+                if not full_path.exists():
+                    continue
+                snippet = self._read_file_excerpt(full_path)
+                if not snippet:
+                    continue
+                source_items.append({
+                    "path": str(full_path),
+                    "title": rel_path,
+                    "snippet": snippet,
+                    "collection": "bounty-artifact",
+                    "source": "bounty-artifact",
+                })
         evidence_limit = None
         if meta and meta.get("evidence_limit"):
             try:
@@ -372,6 +390,12 @@ class ConclavePipeline:
         questions = re.findall(r"\\*\\*Question:\\*\\*\\s*(.+)", instructions)
         for q in questions:
             queries.append(q.strip())
+        artifact_paths = re.findall(r"^-\\s*(\\S+)$", instructions, re.MULTILINE)
+        for item in artifact_paths:
+            if item.startswith("http"):
+                continue
+            queries.append(item)
+            queries.append(Path(item).name)
         constants = re.findall(r"([A-Z_]{3,})\\s*=", instructions)
         queries.extend(constants)
         unique = []
@@ -398,6 +422,20 @@ class ConclavePipeline:
             return []
         import re
         paths = re.findall(r"(?:programs|crates)/[A-Za-z0-9_./-]+\\.rs", instructions)
+        unique = []
+        seen = set()
+        for path in paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            unique.append(path)
+        return unique
+
+    def _extract_artifact_paths(self, instructions: str) -> list[str]:
+        if not instructions:
+            return []
+        import re
+        paths = re.findall(r"^-\\s*(/[^\\s]+)$", instructions, re.MULTILINE)
         unique = []
         seen = set()
         for path in paths:

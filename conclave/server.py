@@ -33,6 +33,11 @@ def _inputs_dir(config) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+def _artifacts_dir(config) -> Path:
+    path = config.data_dir / "artifacts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 def _prompts_dir(config) -> Path:
     path = config.data_dir / "prompts"
     path.mkdir(parents=True, exist_ok=True)
@@ -44,7 +49,7 @@ def _prompt_path(config, prompt_id: str) -> Path:
 def _prompt_input_path(config, prompt_id: str) -> Path:
     return _inputs_dir(config) / f"prompt-{prompt_id}.md"
 
-def _write_prompt_input(path: Path, title: str, question: str, notes: str) -> None:
+def _write_prompt_input(path: Path, title: str, question: str, notes: str, artifacts: list[str] | None = None) -> None:
     body = []
     if title:
         body.append(f"# {title}")
@@ -55,6 +60,11 @@ def _write_prompt_input(path: Path, title: str, question: str, notes: str) -> No
         body.append("")
     body.append("## Notes")
     body.append(notes or "")
+    if artifacts:
+        body.append("")
+        body.append("## Artifacts")
+        for item in artifacts:
+            body.append(f"- {item}")
     path.write_text("\n".join(body).strip() + "\n")
 
 
@@ -164,6 +174,8 @@ async def inputs_api(payload: dict, request: Request):
         return JSONResponse({"error": "content required"}, status_code=400)
     title = (payload.get("title") or "").strip()
     question = (payload.get("question") or "").strip()
+    artifacts = payload.get("artifacts") or []
+    artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
     slug = _slugify(title or question or "input")
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f"{ts}-{slug}.md"
@@ -179,8 +191,13 @@ async def inputs_api(payload: dict, request: Request):
         body.append("")
     body.append("## Notes")
     body.append(content)
+    if artifacts:
+        body.append("")
+        body.append("## Artifacts")
+        for item in artifacts:
+            body.append(f"- {item}")
     path.write_text("\n".join(body).strip() + "\n")
-    return {"ok": True, "input_id": filename, "path": str(path)}
+    return {"ok": True, "input_id": filename, "path": str(path), "artifacts": artifacts}
 
 
 @app.get("/api/inputs")
@@ -202,6 +219,8 @@ async def prompts_create_api(payload: dict, request: Request):
     title = (payload.get("title") or "").strip()
     query = (payload.get("query") or "").strip()
     notes = (payload.get("notes") or "").strip()
+    artifacts = payload.get("artifacts") or []
+    artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
     if not query:
         return JSONResponse({"error": "query required"}, status_code=400)
     prompt_id = (payload.get("id") or "").strip()
@@ -216,12 +235,13 @@ async def prompts_create_api(payload: dict, request: Request):
         "title": title,
         "query": query,
         "notes": notes,
+        "artifacts": artifacts,
         "created_at": created_at,
         "updated_at": created_at,
         "input_path": str(_prompt_input_path(config, prompt_id)),
         "last_run_id": None,
     }
-    _write_prompt_input(Path(prompt["input_path"]), title, query, notes)
+    _write_prompt_input(Path(prompt["input_path"]), title, query, notes, artifacts)
     path.write_text(json.dumps(prompt, indent=2))
     return {"ok": True, "prompt": prompt}
 
@@ -236,13 +256,18 @@ async def prompts_update_api(prompt_id: str, payload: dict, request: Request):
     title = (payload.get("title") or prompt.get("title") or "").strip()
     query = (payload.get("query") or prompt.get("query") or "").strip()
     notes = (payload.get("notes") or prompt.get("notes") or "").strip()
+    artifacts = payload.get("artifacts")
+    if artifacts is None:
+        artifacts = prompt.get("artifacts") or []
+    artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
     prompt["title"] = title
     prompt["query"] = query
     prompt["notes"] = notes
+    prompt["artifacts"] = artifacts
     prompt["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     input_path = Path(prompt.get("input_path") or _prompt_input_path(config, prompt_id))
     prompt["input_path"] = str(input_path)
-    _write_prompt_input(input_path, title, query, notes)
+    _write_prompt_input(input_path, title, query, notes, artifacts)
     path.write_text(json.dumps(prompt, indent=2))
     return {"ok": True, "prompt": prompt}
 

@@ -524,12 +524,16 @@ async function startRun(query) {
   renderProgress({ status: 'running', events: [] });
   const inputTitle = document.getElementById('input-title').value.trim();
   const inputNotes = document.getElementById('input-notes').value.trim();
+  const inputArtifacts = document.getElementById('input-artifacts').value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line);
   let inputId = null;
   if (inputNotes) {
     const inputResp = await fetchJSON('/api/inputs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: inputTitle, content: inputNotes, question: query }),
+      body: JSON.stringify({ title: inputTitle, content: inputNotes, question: query, artifacts: inputArtifacts }),
     });
     inputId = inputResp.input_id;
   }
@@ -560,11 +564,15 @@ async function savePrompt() {
   const query = document.getElementById('query').value.trim();
   const title = document.getElementById('input-title').value.trim();
   const notes = document.getElementById('input-notes').value.trim();
+  const artifacts = document.getElementById('input-artifacts').value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line);
   if (!query) {
     setPromptStatus('Prompt required');
     return;
   }
-  const payload = { title, query, notes };
+  const payload = { title, query, notes, artifacts };
   let resp;
   if (currentPromptId) {
     resp = await fetchJSON(`/api/prompts/${currentPromptId}`, {
@@ -589,6 +597,7 @@ async function loadPrompt(promptId) {
   document.getElementById('query').value = prompt.query || '';
   document.getElementById('input-title').value = prompt.title || '';
   document.getElementById('input-notes').value = prompt.notes || '';
+  document.getElementById('input-artifacts').value = (prompt.artifacts || []).join('\n');
   currentPromptId = prompt.id;
   setPromptStatus(`Loaded: ${prompt.id}`);
 }
@@ -678,6 +687,7 @@ clearBtn.addEventListener('click', () => {
   document.getElementById('query').value = '';
   document.getElementById('input-title').value = '';
   document.getElementById('input-notes').value = '';
+  document.getElementById('input-artifacts').value = '';
   currentPromptId = null;
   setPromptStatus('Not saved');
 });
