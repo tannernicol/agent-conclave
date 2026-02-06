@@ -1,0 +1,14 @@
+project:
+  name: agent-conclave
+  mode: local
+
+models:
+  - name: local-ollama
+    type: ollama
+    endpoint: http://localhost:11434
+    model: qwen2.5:7b
+
+policy:
+  require_human_approval: true
+  block_tool_calls: true
+  log_outputs: true

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160" role="img" aria-label="Agent Conclave">
+  <defs>
+    <linearGradient id="conclave" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#7ee787"/>
+      <stop offset="100%" stop-color="#79c0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="160" rx="20" fill="#0d1117"/>
+  <rect x="16" y="16" width="608" height="128" rx="16" fill="#161b22" stroke="#30363d"/>
+  <path d="M56 88c12-16 28-16 40 0" stroke="url(#conclave)" stroke-width="10" fill="none" stroke-linecap="round"/>
+  <circle cx="56" cy="72" r="6" fill="#e6edf3"/>
+  <circle cx="96" cy="72" r="6" fill="#e6edf3"/>
+  <text x="120" y="88" font-family="Inter, Segoe UI, sans-serif" font-size="28" fill="#e6edf3">Agent Conclave</text>
+  <text x="120" y="116" font-family="Inter, Segoe UI, sans-serif" font-size="14" fill="#8b949e">Multi-model consensus tooling</text>
+</svg>
