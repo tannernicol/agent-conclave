@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov httpx pyyaml
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=conclave --cov-report=xml
+
+      - name: Test scraper API connectivity
+        run: |
+          python -c "
+          import urllib.request
+          import json
+
+          # Test Sherlock API
+          try:
+              req = urllib.request.Request(
+                  'https://audits.sherlock.xyz/api/contests',
+                  headers={'User-Agent': 'conclave-ci/1.0'}
+              )
+              with urllib.request.urlopen(req, timeout=10) as resp:
+                  data = json.loads(resp.read())
+                  assert 'items' in data, 'Sherlock API response missing items'
+                  print(f'✓ Sherlock API: {len(data[\"items\"])} contests')
+          except Exception as e:
+              print(f'⚠ Sherlock API check failed: {e}')
+          "
+
+      - name: Lint check
+        run: |
+          pip install ruff
+          ruff check conclave/ --ignore E501
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test hunt CLI imports
+        run: |
+          pip install pyyaml
+          python -c "
+          from conclave.cli.hunt import HuntCLI, Target, HuntState
+          from conclave.cli.scrape_platforms import scrape_sherlock
+          print('✓ All imports successful')
+          "
+
+      - name: Test target discovery
+        run: |
+          python -c "
+          from conclave.cli.scrape_platforms import scrape_sherlock
+          targets = scrape_sherlock()
+          print(f'✓ Discovered {len(targets)} Sherlock targets')
+          for t in targets[:3]:
+              print(f'  - {t[\"name\"]}: \${t[\"bounty_usd\"]:,}')
+          "
