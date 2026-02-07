@@ -72,9 +72,9 @@ def iter_files(root: Path):
     for path in root.rglob("*"):
         if path.is_dir():
             continue
-        if ".git" in path.parts:
+        if ".git" in path.parts or "__pycache__" in path.parts:
             continue
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf"}:
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".pyc"}:
             continue
         yield path
 
