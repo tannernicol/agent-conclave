@@ -32,7 +32,7 @@ class ConclaveSmokeTest(unittest.TestCase):
         cards = raw.get("models", {}).get("cards", [])
         filtered = [c for c in cards if c.get("id", "").startswith("ollama:") and c.get("id", "").split(":", 1)[1] in self.available]
         if not filtered:
-            strict = str((os.environ.get("CONCLAVE_SMOKE_STRICT") or os.environ.get("CI") or "")).lower() in {"1", "true", "yes"}
+            strict = str(os.environ.get("CONCLAVE_SMOKE_STRICT", "")).lower() in {"1", "true", "yes"}
             if strict:
                 self.fail("No required Ollama models are available. Run: ollama pull qwen2.5-coder:7b")
             raise unittest.SkipTest("Ollama not available; start ollama or set CONCLAVE_SMOKE_STRICT=1")
