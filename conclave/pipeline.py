@@ -2655,7 +2655,7 @@ class ConclavePipeline:
             f"Evidence quality: {evidence_hint}\n\n"
             f"{domain_instructions}\n"
             f"{output_instructions}\n"
-            f"{'Instructions from input:\\n' + instructions + '\\n' if instructions else ''}"
+            f"{('Instructions from input:\n' + instructions + '\n') if instructions else ''}"
             f"Reasoner notes:\n{reasoner_notes}\n\n"
             f"Critic notes:\n{critic_notes}\n"
         )
