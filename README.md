@@ -6,6 +6,10 @@
     <a href="https://tannner.com">tannner.com</a> ·
     <a href="https://github.com/tannernicol/agent-conclave">GitHub</a>
   </p>
+
+[![CI](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 </div>
 
 ---
