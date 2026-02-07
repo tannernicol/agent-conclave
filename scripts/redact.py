@@ -17,6 +17,8 @@ ALLOWLIST_DOMAINS = {
     "websocket.app",
     "request.app",
     "pytest.org",
+    "python.org",
+    "img.shields.io",
 }
 
 ALLOWLIST_IPS = {
