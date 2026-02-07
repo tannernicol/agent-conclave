@@ -1,0 +1,624 @@
+server:
+  host: 127.0.0.1
+  port: 8099
+
+pipeline:
+  run_timeout_seconds: 900
+
+data_dir: ~/.conclave
+
+outputs:
+  types:
+    report:
+      label: Report
+      requires: []
+      artifacts: ["output.md"]
+    decision:
+      label: Decision
+      requires: []
+      artifacts: ["output.md"]
+    plan:
+      label: Plan
+      requires: []
+      artifacts: ["output.md"]
+    checklist:
+      label: Checklist
+      requires: []
+      artifacts: ["output.md"]
+    build_spec:
+      label: Build Spec
+      requires: []
+      artifacts: ["output.md"]
+    document:
+      label: Document
+      requires: []
+      artifacts: ["document.md"]
+
+agent_sets:
+  default:
+    label: Default
+    roles:
+      - router
+      - creator
+      - critic
+      - summarizer
+    panel_models: []
+
+use_cases:
+  - id: general
+    label: General
+    output_type: report
+    agent_set: default
+
+tools:
+  capabilities:
+    image_generation: false
+    image_understanding: false
+    video_generation: false
+    docx_generation: false
+    pdf_generation: false
+    spreadsheet_generation: false
+
+models:
+  registry_path: ~/.conclave/models/registry.json
+  benchmarks_path: ~/.conclave/models/benchmarks.jsonl
+  health_path: ~/.conclave/models/health.json
+  cards:
+    - id: ollama:qwen2.5-coder:7b
+      provider: ollama
+      kind: local
+      model_label: qwen2.5-coder:7b
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: low
+        tool_use: false
+        image_generation: false
+        image_understanding: none
+        json_reliability: low
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 900
+        p95_latency_ms: 3000
+        tokens_per_sec: 40
+    - id: ollama:qwen2.5-coder:32b
+      provider: ollama
+      kind: local
+      model_label: qwen2.5-coder:32b
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: medium
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 1200
+        p95_latency_ms: 4000
+        tokens_per_sec: 35
+    - id: ollama:qwen2.5:32b
+      provider: ollama
+      kind: local
+      model_label: qwen2.5:32b
+      capabilities:
+        text_reasoning: true
+        code_generation: low
+        code_review: low
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 1300
+        p95_latency_ms: 4500
+        tokens_per_sec: 32
+    - id: cli:claude
+      provider: cli
+      kind: external
+      model_label: claude (auto)
+      command:
+        - claude
+        - --print
+        - --model
+        - sonnet
+        - --output-format
+        - text
+        - --dangerously-skip-permissions
+        - --no-session-persistence
+      prompt_mode: arg
+      timeout_seconds: 300
+      env:
+        NO_COLOR: "1"
+      capabilities:
+        text_reasoning: true
+        code_generation: medium
+        code_review: high
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: high
+      constraints:
+        max_context_tokens: 200000
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 2500
+        p95_latency_ms: 8000
+        tokens_per_sec: 25
+    - id: cli:codex
+      provider: cli
+      kind: external
+      model_label: codex (auto)
+      command:
+        - codex
+        - exec
+        - --skip-git-repo-check
+        - --sandbox
+        - read-only
+        - -c
+        - 'model_reasoning_effort="medium"'
+        - -c
+        - 'approval_policy="never"'
+      prompt_mode: stdin
+      stdin_flag: "-"
+      timeout_seconds: 300
+      env:
+        NO_COLOR: "1"
+      fallback_model: ollama:qwen2.5-coder:32b
+      capabilities:
+        text_reasoning: true
+        code_generation: high
+        code_review: high
+        tool_use: true
+        image_generation: false
+        image_understanding: none
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 32768
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 3000
+        p95_latency_ms: 10000
+        tokens_per_sec: 20
+    - id: cli:gemini
+      provider: cli
+      kind: external
+      model_label: gemini (cli)
+      command:
+        - gemini-cli
+      prompt_mode: arg
+      timeout_seconds: 180
+      env:
+        NO_COLOR: "1"
+      capabilities:
+        text_reasoning: true
+        code_generation: low
+        code_review: low
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 3500
+        p95_latency_ms: 12000
+        tokens_per_sec: 18
+    - id: gemini-api:2.5-flash
+      provider: google
+      kind: api
+      model_label: "Gemini 2.5 Flash"
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: medium
+        tool_use: false
+        image_generation: false
+        image_understanding: limited
+        json_reliability: medium
+      constraints:
+        max_context_tokens: 1000000
+        supports_system_prompt: true
+        supports_streaming: false
+      cost:
+        usd_per_1m_input_tokens: 0.15
+        usd_per_1m_output_tokens: 0.60
+      perf_baseline:
+        p50_latency_ms: 2500
+        p95_latency_ms: 8000
+        tokens_per_sec: 30
+
+planner:
+  prefer_local: false
+  prefer_best: true
+  self_organize:
+    enabled: true
+    allow_overrides: true
+    budget:
+      enabled: true
+      total_tokens: 120000
+      cost_weight_boost: 0.35
+  role_overrides:
+    reasoner: cli:codex
+    critic: cli:claude
+    summarizer: cli:claude
+  weights:
+    latency: 0.35
+    reliability: 0.25
+    cost: 0.2
+    affinity: 0.2
+  role_affinity:
+    router: {speed: 1.0, reasoning: 0.4, json: 0.6}
+    explorer: {speed: 0.6, reasoning: 0.8, json: 0.4}
+    reasoner: {speed: 0.3, reasoning: 1.0, json: 0.5}
+    critic: {speed: 0.2, reasoning: 1.0, json: 0.8}
+    builder: {speed: 0.4, reasoning: 0.7, json: 0.6}
+    summarizer: {speed: 0.4, reasoning: 0.8, json: 0.7}
+
+rag:
+  base_url: http://localhost:8091
+  use_server_collections: true
+  skip_empty_collections: true
+  trust_explicit_collections: true
+  max_results_per_collection: 8
+  prefer_non_pdf: true
+  min_score: 0.2
+  min_snippet_len: 40
+  min_filename_snippet: 120
+  exclude_collections: []
+  exclude_path_patterns:
+    - "**/.git/**"
+    - "**/node_modules/**"
+    - "**/venv/**"
+    - "**/__pycache__/**"
+    - "**/audit-*.json"
+    - "**/audit*.json"
+    - "**/history.jsonl"
+  collection_reliability:
+    docs: high
+    code-docs: high
+    api-docs: high
+    notes: medium
+  enforce_allowlist: true
+  domain_allowlist:
+    general: [notes]
+    code_review: [code-docs, api-docs, notes]
+    research: [notes]
+    creative: [notes]
+  disable_domains: []
+  default_collections:
+    - notes
+  domain_collections:
+    general: [notes]
+    code_review: [code-docs, api-docs, notes]
+    research: [notes]
+    creative: [notes]
+  dynamic_patterns: {}
+
+routing:
+  override_existing: false
+  domain_priority:
+    - code_review
+    - research
+    - creative
+    - general
+  domain_keywords:
+    code_review:
+      - code review
+      - architecture
+      - debugging
+      - refactor
+      - code quality
+      - pull request
+      - api design
+      - technical debt
+    research:
+      - research
+      - analysis
+      - compare
+      - evaluate
+      - investigate
+      - study
+      - literature
+      - survey
+    creative:
+      - brainstorm
+      - creative
+      - story
+      - design
+      - writing
+      - content
+      - marketing
+      - naming
+    general:
+      - general
+      - question
+      - explain
+      - help
+  audit_queries:
+    code_review: ["api design", "error handling", "test coverage"]
+    research: ["literature review", "comparison", "trade-offs"]
+
+routing_validation:
+  enabled: true
+  cases:
+    - query: "review this code for bugs"
+      expect_domain: code_review
+    - query: "brainstorm marketing ideas"
+      expect_domain: creative
+    - query: "research the trade-offs of microservices"
+      expect_domain: research
+    - query: "refactor the authentication module"
+      expect_domain: code_review
+    - query: "write a creative product description"
+      expect_domain: creative
+    - query: "evaluate database options for our project"
+      expect_domain: research
+    - query: "explain how consensus algorithms work"
+      expect_domain: general
+
+validation_notifications:
+  enabled: false
+  channels: [system]
+  title: "Conclave validation failed"
+  service: "conclave-validate"
+  priority: high
+  tags: ["warning", "conclave"]
+
+evaluation:
+  enabled: true
+  baseline_model: cli:codex
+  judge_model: cli:claude
+  max_cases: 10
+  save_dir: ~/.conclave/evals
+  cases:
+    - id: code_review_api
+      query: "Review this REST API design for common issues"
+      output_type: report
+    - id: research_databases
+      query: "Compare PostgreSQL vs MongoDB for a real-time analytics platform"
+      output_type: report
+    - id: creative_naming
+      query: "Brainstorm names for a developer productivity tool"
+      output_type: plan
+    - id: architecture_decision
+      query: "Should we use microservices or a monolith for a new SaaS product?"
+      output_type: decision
+    - id: code_review_security
+      query: "Review common security anti-patterns in web applications"
+      output_type: checklist
+
+verification:
+  enabled: true
+  search:
+    base_url: http://127.0.0.1:8095
+    endpoint: /search
+    timeout: 10
+    max_results: 5
+  on_demand:
+    research:
+      - type: search
+        title: Research papers and references
+        collection: web-search
+        query_suffix: "research papers analysis"
+    code_review:
+      - type: search
+        title: Best practices and patterns
+        collection: web-search
+        query_suffix: "best practices design patterns"
+    creative:
+      - type: search
+        title: Inspiration and examples
+        collection: web-search
+        query_suffix: "examples inspiration ideas"
+
+index:
+  enabled: false
+  auto_build: false
+  auto_refresh_days: 7
+  allowlist: []
+  exclude_patterns:
+    - "**/.git/**"
+    - "**/node_modules/**"
+    - "**/venv/**"
+    - "**/__pycache__/**"
+    - "**/.ssh/**"
+    - "**/.gnupg/**"
+    - "**/.password-store/**"
+    - "**/credentials/**"
+    - "**/keys/**"
+  max_file_mb: 2
+
+calibration:
+  enabled: true
+  providers:
+    - ollama
+    - cli
+  max_seconds: 20
+  ping_prompt: "Return only: OK"
+
+self_report:
+  enabled: true
+  providers:
+    - ollama
+    - cli
+  max_seconds: 30
+  ttl_seconds: 86400
+
+agent_sync:
+  enabled: false
+  mode: bus
+  max_chars_cloud: 1200
+  max_chars_local: 800
+  post_decisions: true
+
+required_models:
+  enabled: true
+  models:
+    - cli:codex
+    - cli:claude
+    - ollama:qwen2.5-coder:7b
+  ping_prompt: "Return only: OK"
+
+deliberation:
+  max_rounds: 5
+  min_intelligent_models: 2
+  require_agreement: true
+  stop_on_repeat_disagreements: true
+  stability_rounds: 2
+  max_draft_chars: 4000
+  max_feedback_chars: 4000
+  max_disagreements_per_review: 8
+  min_time_left_seconds: 150
+  model_timeout_seconds: 120
+  priority_models: []
+  priority_require_all: true
+  priority_min_ratio: null
+  resolver:
+    enabled: true
+    max_disagreements: 6
+  panel:
+    enabled: true
+    filter_unavailable: true
+    ping_timeout_seconds: 30
+    timeout_seconds: 90
+    max_rounds: 2
+    model_ids:
+      - cli:codex
+      - cli:claude
+      - cli:gemini
+      - ollama:qwen2.5-coder:7b
+    require_all: false
+    min_agree_ratio: 0.6
+    include_plan_models: false
+
+annealing:
+  enabled: true
+  max_iterations: 4
+  stable_rounds: 2
+  schedule: linear
+  temperature_start: 1.2
+  temperature_end: 0.3
+  noise_start: 0.18
+  noise_end: 0.05
+  accept_worse_min_prob: 0.05
+  shuffle_panel: true
+  min_time_left_seconds: 200
+  seed: null
+  perturb_prompt: false
+  perturbation_phrases:
+    - "Consider contrarian viewpoints."
+    - "Focus on practical constraints."
+    - "Prioritize cost-effectiveness."
+    - "Weight long-term outcomes heavily."
+    - "Consider what could go wrong."
+  content_convergence: true
+  similarity_threshold: 0.85
+
+diversity_check:
+  enabled: true
+  model_ids:
+    - cli:gemini
+  trigger: disagreement_or_random
+  role: critic
+  max_calls: 1
+  min_round: 1
+  max_round: 3
+  disagreement_boost: 2.0
+  annealing:
+    schedule: linear
+    start_prob: 0.15
+    end_prob: 0.02
+    temperature_start: 1.2
+    temperature_end: 0.4
+
+quality:
+  strict: true
+  block_on_insufficient: false
+  fail_on_rag_errors: false
+  min_evidence: 2
+  low_signal_threshold: 0.5
+  high_signal_threshold: 1.0
+  high_evidence_min: 6
+  min_strong_evidence: 0
+  min_content_evidence: 1
+  min_non_user_evidence: 1
+  min_required_collection_hits: 0
+  domain_risk_multipliers:
+    security: 2.5
+    code_review: 1.5
+    research: 1.5
+    creative: 1.0
+    general: 1.0
+  domain_overrides:
+    general:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      min_content_evidence: 0
+      min_strong_evidence: 0
+      allow_user_only: true
+    security:
+      min_evidence: 3
+      min_non_user_evidence: 2
+      min_content_evidence: 1
+      min_strong_evidence: 1
+      allow_user_only: false
+    code_review:
+      min_evidence: 2
+      min_non_user_evidence: 1
+      min_content_evidence: 1
+      min_strong_evidence: 0
+      allow_user_only: false
+    research:
+      min_evidence: 2
+      min_non_user_evidence: 1
+      min_content_evidence: 1
+      min_strong_evidence: 0
+      allow_user_only: false
+    creative:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      min_content_evidence: 0
+      min_strong_evidence: 0
+      allow_user_only: true
+  pdf_ratio_limit: 0.7
+  off_domain_ratio_limit: 0.5
+  strict_exit_code: 2
+  domain_paths: {}
+
+sources: {}
+
+topics: []
