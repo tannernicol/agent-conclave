@@ -14,7 +14,7 @@ from conclave.config import get_config
 from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.pipeline import ConclavePipeline, PipelineResult
-from conclave.rag import NasIndex, RagClient
+from conclave.rag import FileIndex, RagClient
 from conclave.scheduler import apply_schedule
 from conclave.store import DecisionStore
 from conclave.mcp_bridge import MCPBridge
@@ -257,7 +257,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
 
 def cmd_index(args: argparse.Namespace) -> None:
     config = get_config()
-    index = NasIndex(
+    index = FileIndex(
         data_dir=config.data_dir,
         allowlist=config.index.get("allowlist", []),
         exclude_patterns=config.index.get("exclude_patterns", []),

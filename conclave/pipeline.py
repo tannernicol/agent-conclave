@@ -24,7 +24,7 @@ from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.models.ollama import OllamaClient
 from conclave.models.cli import CliClient
-from conclave.rag import RagClient, NasIndex
+from conclave.rag import RagClient, FileIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
 from conclave.mcp import load_mcp_servers
@@ -63,7 +63,7 @@ class ConclavePipeline:
         self.ollama = OllamaClient()
         self.cli = CliClient()
         self.rag = RagClient(config.rag.get("base_url", "http://localhost:8091"))
-        self.index = NasIndex(
+        self.index = FileIndex(
             data_dir=config.data_dir,
             allowlist=config.index.get("allowlist", []),
             exclude_patterns=config.index.get("exclude_patterns", []),
@@ -300,10 +300,10 @@ class ConclavePipeline:
             context = self._retrieve_context(query, route, meta)
             self._check_timeout("retrieve")
             stats = context.get("stats", {})
-            self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "nas": len(context["nas"]), "evidence": stats.get("evidence_count", 0)}})
+            self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "file_index": len(context["file_index"]), "evidence": stats.get("evidence_count", 0)}})
             audit.log("retrieve.complete", {
                 "rag_count": len(context["rag"]),
-                "nas_count": len(context["nas"]),
+                "file_index_count": len(context["file_index"]),
                 "evidence_count": stats.get("evidence_count", 0),
                 "pdf_ratio": stats.get("pdf_ratio", 0),
                 "max_signal_score": stats.get("max_signal_score", 0),
@@ -311,7 +311,7 @@ class ConclavePipeline:
                 "rag_errors": stats.get("rag_errors", []),
                 "source_errors": stats.get("source_errors", []),
                 "rag_samples": context["rag"][:3],
-                "nas_samples": context["nas"][:3],
+                "file_index_samples": context["file_index"][:3],
                 "source_samples": context.get("sources", [])[:2],
             })
             if meta and meta.get("output_type"):
@@ -630,18 +630,13 @@ class ConclavePipeline:
                     domain = key
                     break
 
-        needs_tax = any(word in q for word in [
-            "tax", "irs", "1099", "basis", "deduction", "section",
-            "schedule f", "passive", "material participation", "hobby loss",
-        ])
         base = collections or self.config.rag.get("domain_collections", {}).get(domain) or self.config.rag.get("default_collections", [])
         required_collections: List[str] = []
-        if needs_tax:
-            tax_collections = self.config.rag.get("domain_collections", {}).get("tax", [])
-            for item in tax_collections:
-                if item not in base:
-                    base.append(item)
-            required_collections = list(tax_collections)
+        # Check for domain-specific collection overrides (configured in rag.domain_collections)
+        domain_collections = self.config.rag.get("domain_collections", {}).get(domain, [])
+        for item in domain_collections:
+            if item not in base:
+                base.append(item)
         allowlist = self.config.rag.get("domain_allowlist", {}).get(domain, [])
         selected, catalog = self._expand_collections(domain, base, explicit=bool(collections), allowlist=allowlist)
         if allowlist and (self.config.rag.get("enforce_allowlist", True) or not collections):
@@ -841,14 +836,14 @@ class ConclavePipeline:
         allowlist = route.get("allowlist") or []
         if allowlist:
             rag_results = [item for item in rag_results if item.get("collection") in allowlist]
-        nas_results = []
+        index_results = []
         file_results = self.rag.search_files(query, limit=10)
         if self.config.index.get("enabled", True):
             auto_build = bool(self.config.index.get("auto_build", False))
             if self.index.db_path.exists() or auto_build:
                 self._maybe_refresh_index()
-                nas_results = self.index.search(query, limit=10)
-        combined_files = file_results + nas_results
+                index_results = self.index.search(query, limit=10)
+        combined_files = file_results + index_results
         if prefer_non_pdf:
             rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
         user_inputs = self._load_user_input(meta)
@@ -947,7 +942,7 @@ class ConclavePipeline:
             stats["input_path"] = user_inputs[0].get("path")
         return {
             "rag": rag_results,
-            "nas": combined_files,
+            "file_index": combined_files,
             "sources": source_items,
             "evidence": evidence,
             "stats": stats,
@@ -2905,8 +2900,8 @@ class ConclavePipeline:
         for item in context.get("rag", [])[:12]:
             title = item.get("title") or item.get("name") or item.get("path")
             lines.append(f"- [RAG] {title}: {item.get('snippet') or item.get('match_line') or ''}")
-        for item in context.get("nas", [])[:12]:
-            lines.append(f"- [NAS] {item.get('title')}: {item.get('snippet', '')}")
+        for item in context.get("file_index", [])[:12]:
+            lines.append(f"- [FILE] {item.get('title')}: {item.get('snippet', '')}")
         blob = "\n".join(lines)
         if self._context_char_limit:
             return blob[: self._context_char_limit]
@@ -4216,7 +4211,7 @@ class ConclavePipeline:
     def _select_evidence(
         self,
         rag: List[Dict[str, Any]],
-        nas: List[Dict[str, Any]],
+        file_index: List[Dict[str, Any]],
         limit: int = 12,
         preferred_collections: List[str] | None = None,
         required_collections: List[str] | None = None,
@@ -4230,9 +4225,9 @@ class ConclavePipeline:
         user_input_present = False
         for item in rag:
             items.append(self._score_item(item, "rag", preferred_collections, domain, domain_paths, collection_reliability))
-        for item in nas:
+        for item in file_index:
             enriched = self._maybe_attach_line(item)
-            items.append(self._score_item(enriched, "nas", preferred_collections, domain, domain_paths, collection_reliability))
+            items.append(self._score_item(enriched, "file_index", preferred_collections, domain, domain_paths, collection_reliability))
         if user_items:
             for item in user_items:
                 user_input_present = True

@@ -4,7 +4,7 @@
 
 If you find a security issue, please report it privately.
 
-- Contact: `tannernicol@gmail.com`
+- Open a [GitHub Security Advisory](https://github.com/tannernicol/agent-conclave/security/advisories/new) or file a private issue.
 - Please include clear reproduction steps and affected components.
 
 ## Scope

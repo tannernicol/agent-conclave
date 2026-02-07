@@ -43,8 +43,8 @@ class ConclaveSmokeTest(unittest.TestCase):
         config = self._build_test_config()
         pipeline = ConclavePipeline(config)
         examples = [
-            "Summarize any tax action items for me.",
-            "Summarize any health follow-ups I should consider.",
+            "Compare the trade-offs between microservices and monolith architectures.",
+            "Summarize best practices for error handling in REST APIs.",
         ]
         for query in examples:
             result = pipeline.run(query)

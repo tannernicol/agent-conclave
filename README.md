@@ -40,8 +40,7 @@ python scripts/demo.py --config config/local.yaml
 ```
 
 ```
-$ conclave run --panel claude,gpt4,llama \
-    "Is this deployment safe to ship?"
+$ conclave run --query "Is this deployment safe to ship?"
 → Panel: 3 models, 12 reasoning chains
 → Verdict: HOLD (2-1) — claude flagged auth regression
 ```

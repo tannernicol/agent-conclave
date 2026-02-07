@@ -16,7 +16,7 @@ class QualityTests(unittest.TestCase):
                 "score": 0.9,
             }
         ]
-        nas = [
+        file_index = [
             {
                 "path": "/data/security-docs/notes.md",
                 "collection": "security-docs",
@@ -25,7 +25,7 @@ class QualityTests(unittest.TestCase):
         ]
         evidence, stats = pipeline._select_evidence(
             rag,
-            nas,
+            file_index,
             preferred_collections=["security-docs"],
             required_collections=["security-docs"],
             domain="security",

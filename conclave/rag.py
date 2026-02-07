@@ -1,4 +1,4 @@
-"""RAG + NAS indexing integration."""
+"""RAG + local file indexing integration."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -157,7 +157,7 @@ class RagClient:
             return False
 
 
-class NasIndex:
+class FileIndex:
     def __init__(
         self,
         data_dir: Path,
@@ -169,7 +169,7 @@ class NasIndex:
         self.allowlist = [Path(p) for p in allowlist]
         self.exclude_patterns = exclude_patterns
         self.max_bytes = max_file_mb * 1024 * 1024
-        self.db_path = data_dir / "index" / "nas_index.db"
+        self.db_path = data_dir / "index" / "file_index.db"
 
     def _excluded(self, path: Path) -> bool:
         path_str = str(path)
@@ -282,7 +282,7 @@ class NasIndex:
             for row in cursor.fetchall():
                 results.append({
                     "type": "document",
-                    "source": "nas",
+                    "source": "file_index",
                     "title": row["filename"],
                     "file_path": row["path"],
                     "snippet": row["snippet"],

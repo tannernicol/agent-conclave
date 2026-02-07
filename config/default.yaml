@@ -137,6 +137,8 @@ models:
       provider: cli
       kind: external
       model_label: claude (auto)
+      # Adjust permission flags to match your security preferences.
+      # For example, add '--dangerously-skip-permissions' if you accept the risk.
       command:
         - claude
         - --print
@@ -144,7 +146,6 @@ models:
         - sonnet
         - --output-format
         - text
-        - --dangerously-skip-permissions
         - --no-session-persistence
       prompt_mode: arg
       timeout_seconds: 300

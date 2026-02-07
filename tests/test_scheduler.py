@@ -7,7 +7,7 @@ from conclave.scheduler import apply_schedule, slugify, render_service, render_t
 
 class SchedulerTests(unittest.TestCase):
     def test_slugify(self):
-        self.assertEqual(slugify("Tax Checkup"), "tax-checkup")
+        self.assertEqual(slugify("Code Review"), "code-review")
         self.assertEqual(slugify("  "), "topic")
 
     def test_render_units(self):
