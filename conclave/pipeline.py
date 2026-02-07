@@ -2638,6 +2638,7 @@ class ConclavePipeline:
         waiver_instruction = ""
         if allow_optional_waiver:
             waiver_instruction = " If optional models were skipped, do not mark 'all models used' as failed; mark as waived/ignored."
+        instructions_block = "Instructions from input:\n" + instructions + "\n" if instructions else ""
         summary_prompt = (
             "You are the summarizer. Produce a consensus answer with bullet points."
             " Be prescriptive and actionable. Do not mention model limitations."
@@ -2655,7 +2656,7 @@ class ConclavePipeline:
             f"Evidence quality: {evidence_hint}\n\n"
             f"{domain_instructions}\n"
             f"{output_instructions}\n"
-            f"{('Instructions from input:\n' + instructions + '\n') if instructions else ''}"
+            f"{instructions_block}"
             f"Reasoner notes:\n{reasoner_notes}\n\n"
             f"Critic notes:\n{critic_notes}\n"
         )
