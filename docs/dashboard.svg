@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-label="Conclave Web Dashboard">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#010409"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="620" fill="url(#bg)"/>
+
+  <!-- Browser chrome -->
+  <rect x="24" y="16" width="912" height="588" rx="12" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="24" y="16" width="912" height="36" rx="12" fill="#1c2128"/>
+  <rect x="24" y="40" width="912" height="12" fill="#1c2128"/>
+  <circle cx="48" cy="34" r="6" fill="#f85149" opacity="0.8"/>
+  <circle cx="68" cy="34" r="6" fill="#d29922" opacity="0.8"/>
+  <circle cx="88" cy="34" r="6" fill="#3fb950" opacity="0.8"/>
+  <rect x="200" y="26" width="300" height="18" rx="4" fill="#0d1117"/>
+  <text x="220" y="39" font-family="system-ui, -apple-system, sans-serif" font-size="10" fill="#8b949e">localhost:8099</text>
+
+  <!-- Header -->
+  <rect x="24" y="52" width="912" height="48" fill="#161b22"/>
+  <line x1="24" y1="100" x2="936" y2="100" stroke="#30363d" stroke-width="1"/>
+  <rect x="48" y="64" width="28" height="28" rx="6" fill="#58a6ff" opacity="0.15"/>
+  <text x="55" y="84" font-family="system-ui, sans-serif" font-size="16" font-weight="700" fill="#58a6ff">C</text>
+  <text x="86" y="78" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#e6edf3">Conclave</text>
+  <text x="86" y="92" font-family="system-ui, sans-serif" font-size="10" fill="#8b949e">Multi-model consensus engine</text>
+  <rect x="820" y="68" width="96" height="24" rx="12" fill="#238636" opacity="0.9"/>
+  <text x="838" y="84" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#ffffff">Consensus</text>
+
+  <!-- Left panel - Query -->
+  <rect x="40" y="116" width="420" height="180" rx="10" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="60" y="142" font-family="system-ui, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Ask Conclave</text>
+  <rect x="56" y="154" width="388" height="60" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="68" y="174" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">Is this deployment safe to ship? We have</text>
+  <text x="68" y="192" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">auth changes in /api/login and rate limiter</text>
+  <text x="68" y="208" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">updates on /api/tokens.</text>
+  <!-- Quick chips -->
+  <rect x="56" y="224" width="64" height="22" rx="11" fill="#1f6feb" opacity="0.15" stroke="#1f6feb" stroke-width="0.5"/>
+  <text x="68" y="239" font-family="system-ui, sans-serif" font-size="10" fill="#58a6ff">Security</text>
+  <rect x="128" y="224" width="72" height="22" rx="11" fill="#161b22" stroke="#30363d" stroke-width="0.5"/>
+  <text x="138" y="239" font-family="system-ui, sans-serif" font-size="10" fill="#8b949e">Research</text>
+  <rect x="208" y="224" width="88" height="22" rx="11" fill="#161b22" stroke="#30363d" stroke-width="0.5"/>
+  <text x="218" y="239" font-family="system-ui, sans-serif" font-size="10" fill="#8b949e">Code Review</text>
+  <!-- Run info -->
+  <text x="56" y="278" font-family="JetBrains Mono, monospace" font-size="10" fill="#8b949e">3 models  |  2 rounds  |  12 reasoning chains  |  4.2s</text>
+
+  <!-- Right panel - Verdict -->
+  <rect x="480" y="116" width="456" height="180" rx="10" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="500" y="142" font-family="system-ui, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Verdict</text>
+  <rect x="575" y="128" width="52" height="20" rx="10" fill="#da3633" opacity="0.15"/>
+  <text x="585" y="142" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#f85149">HOLD</text>
+  <text x="636" y="142" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">(3-0 unanimous)</text>
+  <!-- Findings -->
+  <rect x="496" y="154" width="424" height="28" rx="6" fill="#161b22"/>
+  <circle cx="514" cy="168" r="4" fill="#f85149"/>
+  <text x="526" y="172" font-family="system-ui, sans-serif" font-size="11" fill="#e6edf3">Auth regression in /api/login</text>
+  <text x="860" y="172" font-family="JetBrains Mono, monospace" font-size="10" fill="#8b949e">claude</text>
+  <rect x="496" y="188" width="424" height="28" rx="6" fill="#161b22"/>
+  <circle cx="514" cy="202" r="4" fill="#d29922"/>
+  <text x="526" y="206" font-family="system-ui, sans-serif" font-size="11" fill="#e6edf3">Rate limiter bypass on /api/tokens</text>
+  <text x="860" y="206" font-family="JetBrains Mono, monospace" font-size="10" fill="#8b949e">llama</text>
+  <rect x="496" y="222" width="424" height="28" rx="6" fill="#161b22"/>
+  <circle cx="514" cy="236" r="4" fill="#3fb950"/>
+  <text x="526" y="240" font-family="system-ui, sans-serif" font-size="11" fill="#e6edf3">CORS config validated, no issues</text>
+  <text x="860" y="240" font-family="JetBrains Mono, monospace" font-size="10" fill="#8b949e">gpt-4o</text>
+  <!-- Confidence -->
+  <text x="500" y="274" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">Confidence:</text>
+  <text x="572" y="274" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#f85149">High</text>
+  <text x="620" y="274" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">|  2 security findings  |  0 regressions</text>
+
+  <!-- Bottom panel - Model responses -->
+  <rect x="40" y="310" width="896" height="280" rx="10" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="60" y="336" font-family="system-ui, sans-serif" font-size="13" font-weight="600" fill="#e6edf3">Deliberation</text>
+
+  <!-- Model tabs -->
+  <rect x="56" y="348" width="80" height="26" rx="6" fill="#1f6feb" opacity="0.15"/>
+  <text x="70" y="365" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#58a6ff">claude</text>
+  <rect x="144" y="348" width="80" height="26" rx="6" fill="#161b22"/>
+  <text x="162" y="365" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">gpt-4o</text>
+  <rect x="232" y="348" width="80" height="26" rx="6" fill="#161b22"/>
+  <text x="252" y="365" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">llama</text>
+  <rect x="320" y="348" width="100" height="26" rx="6" fill="#161b22"/>
+  <text x="332" y="365" font-family="system-ui, sans-serif" font-size="11" fill="#8b949e">consensus</text>
+
+  <!-- Response content -->
+  <rect x="56" y="384" width="864" height="190" rx="6" fill="#161b22"/>
+  <text x="72" y="408" font-family="system-ui, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Round 1 (independent analysis)</text>
+  <text x="72" y="430" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">The /api/login endpoint has an auth regression. The session token is</text>
+  <text x="72" y="448" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">not being validated against the new middleware. This allows bypass of</text>
+  <text x="72" y="466" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">the 2FA check introduced in v2.3.</text>
+  <text x="72" y="494" font-family="system-ui, sans-serif" font-size="12" font-weight="600" fill="#e6edf3">Round 2 (cross-validation)</text>
+  <text x="72" y="516" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">Confirmed after reviewing gpt-4o's analysis. The rate limiter bypass</text>
+  <text x="72" y="534" font-family="system-ui, sans-serif" font-size="12" fill="#e6edf3">flagged by llama is also valid. Recommend HOLD until both are patched.</text>
+
+  <!-- Audit trail link -->
+  <text x="72" y="562" font-family="JetBrains Mono, monospace" font-size="10" fill="#8b949e">Audit trail: .conclave/traces/2026-02-07-1542.json</text>
+</svg>

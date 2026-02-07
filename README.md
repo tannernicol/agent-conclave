@@ -15,19 +15,27 @@
 ---
 
 <p align="center">
-  <img src="docs/demo.png" alt="Conclave demo" width="700" />
+  <img src="docs/dashboard.svg" alt="Conclave web dashboard" width="700" />
 </p>
 
-## What it does
+## The Problem
 
-For agent users who find themselves constantly copy/pasting between different models until they reach consensus on high leverage decisions. Conclave automates a set of local agents self-organizing based on their relative strengths and iterating until an agreed best solution is reached. Uses simulated annealing for randomness and will reconcile with past results to over time find its optimal answer.
+You're making a high-stakes decision — shipping a deploy, choosing an architecture, reviewing a security change. You ask Claude. Then you ask GPT. Then you ask Llama. You copy-paste between tabs, mentally diff the answers, and try to synthesize a verdict. Every time.
 
-## Key features
+## The Solution
 
-- **Model-agnostic adapters** for local, hosted, and self-hosted LLMs (Ollama, OpenAI, Anthropic)
-- **Configurable consensus strategies** with deterministic replay and simulated annealing
-- **Policy hooks and guardrails** for sensitive workflows
-- **Full audit trails** with replayable traces — every decision is reproducible
+Conclave automates multi-model deliberation. Send one query, get structured consensus from N models that see each other's reasoning and iterate until they converge. Simulated annealing controls exploration vs. exploitation. Every decision produces a replayable audit trail.
+
+**One query in, one verdict out. No more copy-paste consensus.**
+
+## Key Features
+
+- **Model-agnostic** — Ollama, OpenAI, Anthropic, or any combination
+- **Multi-round deliberation** — models cross-validate each other's reasoning
+- **Configurable consensus** — deterministic replay, simulated annealing, custom rubrics
+- **Policy guardrails** — enforce constraints on sensitive workflows
+- **Full audit trails** — every chain of thought saved as replayable JSON
+- **Web dashboard** — real-time deliberation view with verdict, findings, and model tabs
 
 ## Quick start
 
