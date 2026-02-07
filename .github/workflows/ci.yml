@@ -14,7 +14,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install deps
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest pytest-asyncio
+      - name: Run tests
+        run: python -m pytest tests/ -x -q
       - name: Run demo harness
         run: python scripts/demo.py --config config/example.yaml
       - name: Redaction check
