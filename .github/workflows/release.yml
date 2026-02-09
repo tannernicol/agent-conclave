@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install cyclonedx-bom
-          cyclonedx-py requirements --input-file requirements.txt --output-file sbom.json
+          cyclonedx-py requirements -i requirements.txt -o sbom.json
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
