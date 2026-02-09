@@ -410,47 +410,7 @@ class MCPBridge:
             server.close()
         self.servers.clear()
 
-    # Convenience methods for common operations
-
-    def money_summary(self) -> MCPResponse:
-        """Get financial summary."""
-        return self.call("money", "money_summary", timeout=15.0)
-
-    def money_networth(self, range: str = "1y") -> MCPResponse:
-        """Get net worth history."""
-        return self.call("money", "money_networth", {"range": range}, timeout=15.0)
-
-    def money_spending(self) -> MCPResponse:
-        """Get current month spending breakdown."""
-        return self.call("money", "money_spending", timeout=15.0)
-
-    def bounty_rag_query(self, query: str, category: str = "all", limit: int = 10) -> MCPResponse:
-        """Query bounty RAG for vulnerability patterns."""
-        return self.call("bounty-training", "bounty_rag_query", {
-            "query": query,
-            "category": category,
-            "limit": limit,
-        }, timeout=30.0)
-
-    def bounty_semantic_search(self, query: str, top_k: int = 5) -> MCPResponse:
-        """Semantic search for similar vulnerabilities."""
-        return self.call("bounty-training", "bounty_semantic_search", {
-            "query": query,
-            "top_k": top_k,
-        }, timeout=30.0)
-
-    def bounty_predict_outcome(self, vuln_type: str, description: str, target: str = None, severity: str = None) -> MCPResponse:
-        """Predict submission outcome based on similar findings."""
-        args = {"vuln_type": vuln_type, "description": description}
-        if target:
-            args["target"] = target
-        if severity:
-            args["severity"] = severity
-        return self.call("bounty-training", "bounty_predict_outcome", args, timeout=30.0)
-
-    def bounty_false_positive_patterns(self, vuln_type: str) -> MCPResponse:
-        """Get known false positive patterns for a vulnerability type."""
-        return self.call("bounty-training", "bounty_false_positive_patterns", {"vuln_type": vuln_type}, timeout=15.0)
+    # Convenience methods for cross-domain learning (generic, not domain-specific)
 
     def memory_learn(self, category: str, learning: str, context: str = None, importance: str = "medium") -> MCPResponse:
         """Store a learning for future sessions."""

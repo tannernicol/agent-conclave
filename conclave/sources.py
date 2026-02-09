@@ -43,9 +43,11 @@ def extract_text(html: str) -> str:
 
 
 @dataclass
-class HealthDashboardClient:
+class HTMLSourceClient:
+    """Fetches and extracts text from HTML pages as evidence."""
     base_url: str
     pages: List[str]
+    collection: str = "html-source"
     errors: List[Dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
@@ -81,18 +83,20 @@ class HealthDashboardClient:
                     "path": url,
                     "title": title,
                     "snippet": snippet,
-                    "collection": "health-dashboard",
-                    "source": "health-dashboard",
+                    "collection": self.collection,
+                    "source": self.collection,
                 })
             except Exception as exc:
-                self._record_error(f"health:{page}", exc)
+                self._record_error(f"html:{page}", exc)
         return results
 
 
 @dataclass
-class MoneyClient:
+class APISourceClient:
+    """Fetches JSON from API endpoints as evidence."""
     base_url: str
     endpoints: List[str]
+    collection: str = "api-source"
     errors: List[Dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
@@ -121,15 +125,15 @@ class MoneyClient:
                     resp = client.get(url)
                     resp.raise_for_status()
                     data = resp.json()
-                title = f"money:{endpoint}"
+                title = f"api:{endpoint}"
                 snippet = json.dumps(data, indent=2)[:1200]
                 results.append({
                     "path": url,
                     "title": title,
                     "snippet": snippet,
-                    "collection": "money-api",
-                    "source": "money-api",
+                    "collection": self.collection,
+                    "source": self.collection,
                 })
             except Exception as exc:
-                self._record_error(f"money:{endpoint}", exc)
+                self._record_error(f"api:{endpoint}", exc)
         return results

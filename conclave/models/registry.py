@@ -20,9 +20,10 @@ class ModelRegistry:
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "ModelRegistry":
-        registry_path = Path(config.get("registry_path", "/home/tanner/.conclave/models/registry.json"))
-        benchmarks_path = Path(config.get("benchmarks_path", "/home/tanner/.conclave/models/benchmarks.jsonl"))
-        health_path = Path(config.get("health_path", "/home/tanner/.conclave/models/health.json"))
+        default_dir = Path.home() / ".conclave" / "models"
+        registry_path = Path(config.get("registry_path", str(default_dir / "registry.json")))
+        benchmarks_path = Path(config.get("benchmarks_path", str(default_dir / "benchmarks.jsonl")))
+        health_path = Path(config.get("health_path", str(default_dir / "health.json")))
         cards = {card["id"]: card for card in config.get("cards", [])}
         instance = cls(registry_path, benchmarks_path, health_path, cards)
         instance._load_registry()
@@ -36,7 +37,7 @@ class ModelRegistry:
             for model_id, stored in data.get("models", {}).items():
                 if model_id in self.cards:
                     merged = dict(self.cards[model_id])
-                    for key in ("metrics", "perf_baseline", "cost"):
+                    for key in ("metrics", "perf_baseline", "cost", "capabilities_override", "self_report"):
                         if key in stored:
                             merged[key] = stored[key]
                     self.cards[model_id] = merged
@@ -67,6 +68,15 @@ class ModelRegistry:
         entry.update(observation)
         self._append_benchmark(model_id, observation)
         self._update_health(model_id, observation)
+        self.save()
+
+    def update_capabilities_override(self, model_id: str, override: Dict[str, Any], meta: Dict[str, Any] | None = None) -> None:
+        if model_id not in self.cards:
+            return
+        entry = self.cards[model_id]
+        entry["capabilities_override"] = override
+        if meta is not None:
+            entry["self_report"] = meta
         self.save()
 
     def _append_benchmark(self, model_id: str, observation: Dict[str, Any]) -> None:

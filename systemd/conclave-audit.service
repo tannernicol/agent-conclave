@@ -4,5 +4,5 @@ After=network.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/tanner/conclave
-ExecStart=/usr/bin/python3 -m conclave.cli audit --mode all --output-dir /home/tanner/.conclave/audits
+WorkingDirectory=%h/conclave
+ExecStart=/usr/bin/python3 -m conclave.cli audit --mode all --output-dir %h/.conclave/audits

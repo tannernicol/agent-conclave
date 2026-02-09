@@ -60,6 +60,8 @@ class OnDemandFetcher:
         try:
             if task_type == "http":
                 return self._http_task(task, title, collection)
+            if task_type in {"search", "searxng"}:
+                return self._search_task(task, query, title, collection)
             if task_type == "mcp":
                 return self._mcp_task(task, title, collection)
             if task_type == "file":
@@ -97,6 +99,57 @@ class OnDemandFetcher:
             "ok": True,
             "item": {
                 "path": url,
+                "title": title,
+                "snippet": snippet,
+                "collection": collection,
+            },
+        }
+
+    def _search_task(self, task: Dict[str, Any], query: str, title: str, collection: str) -> Dict[str, Any]:
+        cfg = self.config.raw.get("verification", {}) or {}
+        search_cfg = cfg.get("search", {}) or {}
+        base_url = str(task.get("base_url") or search_cfg.get("base_url") or "http://127.0.0.1:8095").rstrip("/")
+        endpoint = str(task.get("endpoint") or search_cfg.get("endpoint") or "/search")
+        timeout = float(task.get("timeout", search_cfg.get("timeout", 10.0)))
+        max_results = int(task.get("max_results", search_cfg.get("max_results", 5)))
+
+        task_query = task.get("query")
+        template = task.get("query_template")
+        if task_query:
+            q = str(task_query)
+        elif template:
+            q = str(template).replace("{query}", query)
+        else:
+            prefix = str(task.get("query_prefix") or "").strip()
+            suffix = str(task.get("query_suffix") or "").strip()
+            q = " ".join([part for part in [prefix, query, suffix] if part]).strip()
+        if not q:
+            return {"ok": False, "error": "missing query"}
+
+        params = {"q": q, "format": "json"}
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(f"{base_url}{endpoint}", data=params)
+            resp.raise_for_status()
+            data = resp.json()
+        results = data.get("results", [])[:max_results]
+        if not results:
+            return {"ok": False, "error": "no search results"}
+        lines = []
+        for item in results:
+            title_val = str(item.get("title") or "").strip()
+            url_val = str(item.get("url") or "").strip()
+            snippet_val = str(item.get("content") or item.get("snippet") or "").strip()
+            if title_val and url_val:
+                lines.append(f"- {title_val} — {url_val}")
+            elif url_val:
+                lines.append(f"- {url_val}")
+            if snippet_val:
+                lines.append(f"  {snippet_val[:240]}")
+        snippet = "\n".join(lines)[:1200]
+        return {
+            "ok": True,
+            "item": {
+                "path": f"{base_url}{endpoint}",
                 "title": title,
                 "snippet": snippet,
                 "collection": collection,

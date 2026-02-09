@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/tanner/conclave
+WorkingDirectory=%h/conclave
 ExecStart=/usr/bin/python3 -m conclave.server
 Restart=on-failure
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Conclave</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/homelab-ui.css" />
+    <link rel="stylesheet" href="/static/base.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -31,14 +31,15 @@
           <h2 class="panel-title">Ask Conclave</h2>
           <div class="panel-meta ui-mono" id="prompt-status">Ready</div>
         </div>
+        <div class="prompt-meta ui-mono" id="latest-prompt"></div>
         <form id="query-form" class="form-grid">
           <label for="query">Your Question</label>
-          <textarea id="query" name="query" rows="4" placeholder="Ask about tax, health, money, bounty hunting, or any big decision..."></textarea>
+          <textarea id="query" name="query" rows="4" placeholder="Ask any question for multi-model consensus..."></textarea>
           <div class="prompt-examples" id="prompt-examples">
-            <button type="button" class="ui-chip" data-example="What daily vitamins should I take based on my health data?">Health</button>
-            <button type="button" class="ui-chip" data-example="Summarize my latest tax filings and highlight action items.">Tax</button>
-            <button type="button" class="ui-chip" data-example="How should I adjust my asset allocation?">Money</button>
-            <button type="button" class="ui-chip" data-example="Review the latest bounty target and propose hunt steps.">Bounty</button>
+            <button type="button" class="ui-chip" data-example="What are the top 3 sci-fi films of all time and why?">Creative</button>
+            <button type="button" class="ui-chip" data-example="Review this code for security vulnerabilities.">Security</button>
+            <button type="button" class="ui-chip" data-example="Compare functional vs object-oriented programming.">Research</button>
+            <button type="button" class="ui-chip" data-example="Review this pull request for bugs and style issues.">Code Review</button>
           </div>
 
           <details class="form-advanced">
@@ -46,16 +47,32 @@
             <div class="form-advanced-body">
               <label for="input-title">Title</label>
               <input id="input-title" name="input-title" type="text" placeholder="Optional title for this decision" />
+              <label for="use-case">Use Case</label>
+              <select id="use-case" name="use-case" class="collection-picker">
+                <option value="">Auto (general)</option>
+              </select>
+              <div class="collection-hint ui-muted">Pick a workflow preset (optional).</div>
+              <label for="agent-set">Agent Set</label>
+              <select id="agent-set" name="agent-set" class="collection-picker">
+                <option value="">Auto (default)</option>
+              </select>
+              <div class="collection-hint ui-muted">Choose which agents organize and vote.</div>
+              <label>Role Overrides</label>
+              <div class="role-overrides">
+                <div class="role-overrides-header">
+                  <div class="role-overrides-title">Planner recommendation</div>
+                  <div class="role-overrides-actions">
+                    <button type="button" class="ui-button ghost small" id="refresh-plan">Recommend</button>
+                    <button type="button" class="ui-button ghost small" id="clear-overrides">Clear</button>
+                  </div>
+                </div>
+                <div class="role-overrides-summary ui-muted" id="plan-summary">Run Recommend to see the planner's picks.</div>
+                <div id="role-overrides"></div>
+                <div class="role-overrides-hint ui-muted">Overrides force specific models; leave Auto to use the planner.</div>
+              </div>
               <label for="output-type">Output Type</label>
               <select id="output-type" name="output-type" class="collection-picker">
                 <option value="">Auto (report)</option>
-                <option value="report">Report</option>
-                <option value="decision">Decision</option>
-                <option value="plan">Plan</option>
-                <option value="checklist">Checklist</option>
-                <option value="build_spec">Build spec</option>
-                <option value="image_brief">Image brief</option>
-                <option value="model_3d_brief">3D model brief</option>
               </select>
               <div class="collection-hint ui-muted">Pick the deliverable you want from Conclave.</div>
               <label for="input-collections">Collections</label>
@@ -65,6 +82,9 @@
               <div class="collection-hint ui-muted">Hold Ctrl/Cmd to select multiple</div>
               <label for="input-notes">Supporting Notes</label>
               <textarea id="input-notes" name="input-notes" rows="4" placeholder="Paste notes, context, or data to include as evidence"></textarea>
+              <label for="input-files">Upload Files</label>
+              <input id="input-files" name="input-files" type="file" multiple accept="image/*,.pdf,.docx,.txt,.md" />
+              <div id="artifact-list" class="artifact-list"></div>
               <label for="input-artifacts">File Paths / URLs</label>
               <textarea id="input-artifacts" name="input-artifacts" rows="2" placeholder="One per line"></textarea>
             </div>
@@ -80,16 +100,18 @@
 
       <section class="ui-card panel latest-panel">
         <div class="panel-header">
-          <h2 class="panel-title">Latest Decision</h2>
+          <h2 class="panel-title" id="latest-title">Latest Decision</h2>
           <div class="panel-meta ui-mono" id="latest-time">—</div>
+          <button type="button" class="ui-button ghost small hidden" id="clear-selection">View Latest</button>
         </div>
         <div class="run-action hidden" id="run-action">
           <div class="run-action-title" id="run-action-title"></div>
           <div class="run-action-detail ui-muted" id="run-action-detail"></div>
         </div>
-        <div class="latest-meta" id="latest-prompt"></div>
         <div class="latest-models" id="latest-models"></div>
         <div class="pipeline-progress" id="pipeline-progress"></div>
+        <div class="live-progress hidden" id="live-progress"></div>
+        <div class="reconcile-panel hidden" id="reconcile-panel"></div>
         <div id="latest" class="markdown">
           <div class="empty-state">
             <p>Ask a question to get a multi-model consensus.</p>
@@ -97,28 +119,55 @@
           </div>
         </div>
         <div class="latest-evidence" id="latest-evidence"></div>
+        <div class="latest-artifacts hidden" id="latest-artifacts"></div>
         <div class="latest-actions">
           <button type="button" class="ui-button ghost small" id="copy-latest">Copy Output</button>
+          <button type="button" class="ui-button ghost small" id="view-latest-context">View Context</button>
           <button type="button" class="ui-button ghost small" id="toggle-evidence">Show Evidence</button>
         </div>
       </section>
 
-      <section class="ui-card panel runs-panel">
+      <section class="ui-card panel history-panel">
         <div class="panel-header">
-          <h2 class="panel-title">Run History</h2>
-          <div class="panel-meta ui-mono" id="run-count">0 runs</div>
+          <h2 class="panel-title">History</h2>
+          <div class="panel-tabs" role="tablist" aria-label="History tabs">
+            <button type="button" class="ui-tab is-active" data-tab="saved" role="tab" aria-selected="true" aria-controls="tab-panel-saved">
+              Saved Queries <span class="ui-mono" id="prompt-count">0 saved</span>
+            </button>
+            <button type="button" class="ui-tab" data-tab="runs" role="tab" aria-selected="false" aria-controls="tab-panel-runs">
+              Recent Runs <span class="ui-mono" id="run-count">0 runs</span>
+            </button>
+          </div>
         </div>
-        <div class="run-list" id="run-list"></div>
-      </section>
-
-      <section class="ui-card panel prompts-panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Saved Prompts</h2>
-          <div class="panel-meta ui-mono" id="prompt-count">0 saved</div>
+        <div class="tab-panels">
+          <div class="tab-panel is-active" id="tab-panel-saved" data-tab="saved" role="tabpanel">
+            <div class="prompt-grid" id="prompt-list"></div>
+          </div>
+          <div class="tab-panel" id="tab-panel-runs" data-tab="runs" role="tabpanel">
+            <div class="run-list" id="run-list"></div>
+          </div>
         </div>
-        <div class="prompt-grid" id="prompt-list"></div>
       </section>
     </main>
+
+    <div class="context-modal hidden" id="context-modal" role="dialog" aria-modal="true" aria-labelledby="context-title">
+      <div class="context-modal-content">
+        <div class="context-modal-header">
+          <div>
+            <div class="context-modal-title" id="context-title">Recommendation Context</div>
+            <div class="context-modal-sub ui-muted" id="context-subtitle"></div>
+          </div>
+          <button type="button" class="ui-button ghost small" id="close-context">Close</button>
+        </div>
+        <div class="context-modal-actions">
+          <button type="button" class="ui-button small primary" id="copy-context">Copy Full Context</button>
+          <button type="button" class="ui-button small" id="copy-context-compact">Copy Compact</button>
+        </div>
+        <div class="context-modal-body">
+          <div class="markdown" id="context-body"></div>
+        </div>
+      </div>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>

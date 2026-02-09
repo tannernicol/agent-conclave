@@ -9,6 +9,8 @@ class DeliberationTests(unittest.TestCase):
         pipeline = ConclavePipeline(get_config())
         self.assertTrue(pipeline._critic_agrees("Verdict: AGREE"))
         self.assertFalse(pipeline._critic_agrees("Verdict: DISAGREE"))
+        self.assertTrue(pipeline._critic_agrees("Verdict\nAGREE"))
+        self.assertFalse(pipeline._critic_agrees("Verdict - Disagree"))
 
 
 if __name__ == "__main__":

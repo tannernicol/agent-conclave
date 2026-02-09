@@ -11,13 +11,13 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(slugify("  "), "topic")
 
     def test_render_units(self):
-        service = render_service("tax-checkup", "/usr/bin/python3", Path("/home/tanner/conclave"))
-        self.assertIn("ExecStart=/usr/bin/python3 -m conclave.cli reconcile --topic tax-checkup", service)
-        timer = render_timer("tax-checkup", "weekly")
+        service = render_service("code-review", "/usr/bin/python3", Path("/opt/conclave"))
+        self.assertIn("ExecStart=/usr/bin/python3 -m conclave.cli reconcile --topic code-review", service)
+        timer = render_timer("code-review", "weekly")
         self.assertIn("OnCalendar=weekly", timer)
 
     def test_apply_schedule_dry_run(self):
-        topics = [{"id": "tax-checkup", "schedule": "weekly"}]
+        topics = [{"id": "code-review", "schedule": "weekly"}]
         with tempfile.TemporaryDirectory() as tmpdir:
             result = apply_schedule(
                 topics,

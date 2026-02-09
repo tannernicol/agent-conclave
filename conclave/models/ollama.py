@@ -52,7 +52,7 @@ class OllamaClient:
 
         start = time.perf_counter()
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=120.0) as client:
                 resp = client.post(f"{self.base_url}/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()

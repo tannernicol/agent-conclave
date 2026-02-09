@@ -5,12 +5,41 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "conclave"
 version = "0.1.0"
-description = "Conclave model orchestration engine"
+description = "Multi-agent consensus engine for high-confidence AI decisions"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["llm", "consensus", "multi-agent", "deliberation", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
 
 [project.scripts]
 conclave = "conclave.cli:main"
 
 [tool.setuptools]
-packages = ["conclave", "conclave.models"]
+packages = ["conclave", "conclave.models", "conclave.domains", "conclave.cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

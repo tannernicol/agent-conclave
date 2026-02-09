@@ -1,64 +1,334 @@
 # Conclave Configuration
 
 Config is layered:
-1) `config/default.yaml`
-2) `~/.config/conclave/config.yaml` (optional override)
+1. `config/default.yaml` (shipped defaults)
+2. `~/.config/conclave/config.yaml` (optional user overrides)
+3. Environment variables (highest priority)
 
-Key sections:
-- `server`: host/port
-- `data_dir`: base directory for runs and indexes
-- `models`: capability cards and defaults
-- `planner`: role weights + preferences
-- `rag`: homelab-search endpoint + dynamic collection discovery
-- `index`: NAS allowlist + exclude patterns + auto_build/refresh
-- `quality`: evidence gating + signal thresholds for high-fidelity answers
-- `mcp`: detected from `~/.mcp.json` and logged (no tool calls by default)
-- `deliberation`: multi-round Claude↔Codex agreement loop
-- `topics`: scheduled re-run topics
+## Environment Variables
 
-### RAG options
-- `use_server_collections`: discover collections from rag.tannner.com
-- `skip_empty_collections`: avoid empty collections (file_count == 0)
-- `max_results_per_collection`: cap results per collection
-- `prefer_non_pdf`: deprioritize PDF-heavy results
-- `dynamic_patterns`: include extra collections by keyword
-- `trust_explicit_collections`: when user passes collections, skip catalog lookup
+| Variable | Purpose |
+|----------|---------|
+| `CONCLAVE_HOST` | Server bind address |
+| `CONCLAVE_PORT` | Server port |
+| `CONCLAVE_DATA_DIR` | Base directory for runs and indexes |
+| `CONCLAVE_RAG_URL` | RAG server base URL |
+| `CONCLAVE_MCP_CONFIG` | Path to MCP config file |
+| `CONCLAVE_STRICT` | Enable/disable strict quality mode |
+| `CONCLAVE_CALIBRATION` | Enable/disable model calibration |
+| `CONCLAVE_RUN_TIMEOUT` | Pipeline run timeout in seconds |
+| `CONCLAVE_CLI_TIMEOUT` | CLI model call timeout in seconds |
 
-### Topics scheduling
-Each topic can include:
-- `schedule`: systemd `OnCalendar` string (e.g. `weekly`, `daily`, `Mon *-*-* 03:00:00`)
-- `enabled`: boolean (default true)
+## Key Sections
 
-Use `conclave schedule apply --enable` to create and enable user-level timers.
-Use `--disable-legacy` to disable the legacy `conclave-reconcile.timer`.
-Schedules are validated with `systemd-analyze calendar` unless `--no-validate` is set.
+### Server
+```yaml
+server:
+  host: 127.0.0.1
+  port: 8099
+```
 
-### Quality options
-- `strict`: if true, Conclave will refuse low-evidence answers
-- `min_evidence`: minimum number of evidence items to proceed
-- `low_signal_threshold`: minimum signal score for confidence
-- `high_signal_threshold`: score to allow high confidence
-- `high_evidence_min`: minimum evidence items required for high confidence
-- `pdf_ratio_limit`: if too PDF-heavy, downshift confidence
-- `off_domain_ratio_limit`: if evidence is mostly outside target collections, downshift confidence
-- `strict_exit_code`: exit code returned by CLI when strict mode blocks a response
-- `domain_paths`: optional path globs used to mark NAS items as on-domain by topic
-- `trust_explicit_collections`: when true, skip catalog lookup for explicit collections
+### Data Directory
+```yaml
+data_dir: ~/.conclave
+```
 
-### Deliberation options
-- `deliberation.max_rounds`: maximum reasoner↔critic iterations
-- `deliberation.require_agreement`: if true, loop until critic returns `Verdict: AGREE`
+### Models
+Each model is defined as a capability card:
 
-### CLI model options
-- `models.cards` can include `cli:claude` and `cli:codex`
-- `command`: array of CLI args to execute
-- `prompt_mode`: `arg` (append prompt as argument) or `stdin` (pipe prompt to stdin)
-- `stdin_flag`: optional flag to indicate stdin prompt (e.g. `-`)
-- `timeout_seconds`: per-call timeout
-- `env`: environment variables for the CLI process
+```yaml
+models:
+  cards:
+    - id: ollama:qwen2.5-coder:7b
+      provider: ollama
+      kind: local
+      model_label: qwen2.5-coder:7b
+      capabilities:
+        text_reasoning: true
+        code_generation: true
+        code_review: low
+        tool_use: false
+        json_reliability: low
+      constraints:
+        max_context_tokens: 8192
+        supports_system_prompt: true
+      cost:
+        usd_per_1m_input_tokens: 0
+        usd_per_1m_output_tokens: 0
+      perf_baseline:
+        p50_latency_ms: 900
+        tokens_per_sec: 40
+```
 
-### Sources
-- `sources.health_dashboard_url`: base URL for health.tannner.com (local health dashboard)
-- `sources.health_pages`: pages to scrape for health context
-- `sources.money_api_url`: base URL for money.tannner.com
-- `sources.money_endpoints`: API endpoints to include as evidence
+CLI-based models use `command`, `prompt_mode`, and `timeout_seconds`:
+
+```yaml
+    - id: cli:claude
+      provider: cli
+      kind: external
+      command: ["claude", "--print", "--model", "sonnet", "--output-format", "text"]
+      prompt_mode: arg
+      timeout_seconds: 300
+```
+
+### Planner
+Controls how models are assigned to roles:
+
+```yaml
+planner:
+  prefer_local: false
+  prefer_best: true
+  self_organize:
+    enabled: true
+    budget:
+      enabled: true
+      total_tokens: 120000
+      cost_weight_boost: 0.35
+  role_overrides:
+    reasoner: cli:codex
+    critic: cli:claude
+  weights:
+    latency: 0.35
+    reliability: 0.25
+    cost: 0.2
+    affinity: 0.2
+  role_affinity:
+    reasoner: {speed: 0.3, reasoning: 1.0, json: 0.5}
+    critic: {speed: 0.2, reasoning: 1.0, json: 0.8}
+```
+
+### RAG
+```yaml
+rag:
+  base_url: http://localhost:8091
+  use_server_collections: true
+  skip_empty_collections: true
+  max_results_per_collection: 8
+  min_score: 0.2
+  min_snippet_len: 40
+```
+
+#### Domain Allowlists
+Restrict which RAG collections are used per domain:
+```yaml
+rag:
+  enforce_allowlist: true
+  domain_allowlist:
+    code_review: [code-docs, api-docs]
+    research: [papers, notes]
+```
+
+#### Dynamic Patterns
+Auto-include collections by keyword:
+```yaml
+rag:
+  dynamic_patterns:
+    security:
+      - "security"
+      - "audit"
+      - "vulnerability"
+```
+
+### Routing
+Keyword-based domain detection:
+
+```yaml
+routing:
+  domain_priority:
+    - code_review
+    - research
+    - creative
+    - general
+  domain_keywords:
+    code_review:
+      - code review
+      - architecture
+      - debugging
+      - refactor
+    research:
+      - research
+      - analysis
+      - compare
+      - evaluate
+    creative:
+      - brainstorm
+      - creative
+      - story
+      - design
+```
+
+### Routing Validation
+Automated regression tests for routing:
+
+```yaml
+routing_validation:
+  enabled: true
+  cases:
+    - query: "review this code for bugs"
+      expect_domain: code_review
+    - query: "brainstorm marketing ideas"
+      expect_domain: creative
+```
+
+### Deliberation
+Multi-round Reasoner/Critic loop:
+
+```yaml
+deliberation:
+  max_rounds: 5
+  min_intelligent_models: 2
+  require_agreement: true
+  stop_on_repeat_disagreements: true
+  stability_rounds: 2
+  max_draft_chars: 4000
+  max_feedback_chars: 4000
+  resolver:
+    enabled: true
+    max_disagreements: 6
+  panel:
+    enabled: true
+    model_ids: [cli:codex, cli:claude, ollama:qwen2.5-coder:7b]
+    require_all: false
+    min_agree_ratio: 0.6
+```
+
+### Annealing
+Simulated annealing optimization:
+
+```yaml
+annealing:
+  enabled: true
+  max_iterations: 4
+  stable_rounds: 2
+  schedule: linear          # linear or exp
+  temperature_start: 1.2
+  temperature_end: 0.3
+  noise_start: 0.18
+  noise_end: 0.05
+  accept_worse_min_prob: 0.05
+  shuffle_panel: true
+  perturb_prompt: false
+  content_convergence: true
+  similarity_threshold: 0.85
+```
+
+### Diversity Check
+Optional third-model diversity injection:
+
+```yaml
+diversity_check:
+  enabled: true
+  model_ids: [cli:gemini]
+  trigger: disagreement_or_random
+  max_calls: 1
+  annealing:
+    start_prob: 0.15
+    end_prob: 0.02
+```
+
+### Quality
+Evidence thresholds and domain risk:
+
+```yaml
+quality:
+  strict: true
+  min_evidence: 2
+  min_strong_evidence: 0
+  min_content_evidence: 1
+  min_non_user_evidence: 1
+  domain_risk_multipliers:
+    security: 2.5
+    research: 1.5
+    general: 1.0
+  domain_overrides:
+    general:
+      min_evidence: 1
+      min_non_user_evidence: 0
+      allow_user_only: true
+    security:
+      min_evidence: 3
+      min_non_user_evidence: 2
+      min_strong_evidence: 1
+```
+
+### Calibration
+Model health pings:
+
+```yaml
+calibration:
+  enabled: true
+  providers: [ollama, cli]
+  max_seconds: 20
+  ping_prompt: "Return only: OK"
+```
+
+### Self-Report
+Models describe their own capabilities:
+
+```yaml
+self_report:
+  enabled: true
+  providers: [ollama, cli]
+  max_seconds: 30
+  ttl_seconds: 86400
+```
+
+### Required Models
+Cancel runs if mandatory models are unavailable:
+
+```yaml
+required_models:
+  enabled: true
+  models:
+    - cli:codex
+    - cli:claude
+```
+
+### Evaluation Suite
+Compare Conclave vs baseline:
+
+```yaml
+evaluation:
+  enabled: true
+  baseline_model: cli:codex
+  judge_model: cli:claude
+  cases:
+    - id: code_review_example
+      query: "Review this API design for issues"
+      output_type: report
+```
+
+### Topics (Scheduled Reconciliation)
+```yaml
+topics:
+  - id: weekly-review
+    query: "Weekly project status and priorities"
+    schedule: weekly
+    output_type: report
+    output_md: ~/reports/weekly.md
+```
+
+### Token Budget (CLI)
+Override planner token budget per run:
+
+```bash
+conclave run --query "..." --token-budget-total 50000
+conclave run --query "..." --token-budget-remaining 25000
+```
+
+### Verification (On-Demand Sources)
+Fetch additional evidence per domain:
+
+```yaml
+verification:
+  search:
+    base_url: http://127.0.0.1:8095
+    endpoint: /search
+    timeout: 10
+  on_demand:
+    research:
+      - type: search
+        title: Research papers
+        collection: web-search
+        query_suffix: "academic papers research"
+```

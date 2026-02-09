@@ -10,24 +10,25 @@ class QualityTests(unittest.TestCase):
         pipeline = ConclavePipeline(config)
         rag = [
             {
-                "path": "/home/tanner/health-rag/doc.md",
-                "collection": "health-rag",
+                "path": "/data/security-docs/vuln-report.md",
+                "collection": "security-docs",
                 "snippet": "x" * 80,
                 "score": 0.9,
             }
         ]
         nas = [
             {
-                "path": "/mnt/nas/Homelab/Health/notes.md",
+                "path": "/data/security-docs/notes.md",
+                "collection": "security-docs",
                 "snippet": "y" * 80,
             }
         ]
         evidence, stats = pipeline._select_evidence(
             rag,
             nas,
-            preferred_collections=["health-rag"],
-            required_collections=["health-rag"],
-            domain="health",
+            preferred_collections=["security-docs"],
+            required_collections=["security-docs"],
+            domain="security",
             domain_paths=config.quality.get("domain_paths", {}),
         )
         self.assertGreaterEqual(stats.get("domain_known", 0), 1)
@@ -39,8 +40,8 @@ class QualityTests(unittest.TestCase):
         pipeline = ConclavePipeline(config)
         rag = [
             {
-                "path": "/home/tanner/health-rag/doc.md",
-                "collection": "health-rag",
+                "path": "/data/security-docs/vuln-report.md",
+                "collection": "security-docs",
                 "snippet": "x" * 120,
                 "score": 0.9,
             }
@@ -48,9 +49,9 @@ class QualityTests(unittest.TestCase):
         evidence, stats = pipeline._select_evidence(
             rag,
             [],
-            required_collections=["health-rag"],
-            preferred_collections=["health-rag"],
-            domain="health",
+            required_collections=["security-docs"],
+            preferred_collections=["security-docs"],
+            domain="security",
             domain_paths=config.quality.get("domain_paths", {}),
         )
         self.assertGreaterEqual(stats.get("required_collection_hits", 0), 1)
@@ -60,7 +61,7 @@ class QualityTests(unittest.TestCase):
         pipeline = ConclavePipeline(config)
         rag = [
             {
-                "path": "/home/tanner/notes/example.md",
+                "path": "/data/notes/example.md",
                 "collection": "notes",
                 "snippet": "x" * 120,
                 "score": 0.9,

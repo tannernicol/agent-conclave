@@ -151,6 +151,7 @@ class CliClient:
 
         error = result.error or ""
         stderr = result.stderr or ""
+        stderr_lower = stderr.lower()
 
         # Exit codes that are typically transient
         retryable_exits = ["exit 1", "exit 137", "exit 143"]
@@ -163,8 +164,12 @@ class CliClient:
                 "forbidden",
                 "not found",
                 "invalid model",
+                "quota",
+                "capacity",
+                "resource exhausted",
+                "insufficient quota",
+                "billing",
             ]
-            stderr_lower = stderr.lower()
             if any(pe in stderr_lower for pe in permanent_errors):
                 return False
             return True

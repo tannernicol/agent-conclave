@@ -50,14 +50,6 @@ def load_config() -> Dict[str, Any]:
     if rag_url:
         data.setdefault("rag", {})["base_url"] = rag_url
 
-    # Environment overrides - Sources
-    health_url = os.getenv("CONCLAVE_HEALTH_URL")
-    money_url = os.getenv("CONCLAVE_MONEY_URL")
-    if health_url:
-        data.setdefault("sources", {})["health_dashboard_url"] = health_url
-    if money_url:
-        data.setdefault("sources", {})["money_api_url"] = money_url
-
     # Environment overrides - MCP config path
     mcp_config = os.getenv("CONCLAVE_MCP_CONFIG")
     if mcp_config:
@@ -101,7 +93,8 @@ class Config:
 
     @property
     def data_dir(self) -> Path:
-        return Path(self.raw.get("data_dir", "/home/tanner/.conclave"))
+        default = str(Path.home() / ".conclave")
+        return Path(self.raw.get("data_dir", default))
 
     @property
     def models(self) -> Dict[str, Any]:
