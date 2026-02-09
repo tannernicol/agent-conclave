@@ -13,17 +13,20 @@ ALLOWLIST_DOMAINS = {
     "contributor-covenant.org",
     "googleapis.com",
     "openai.com",
+    "python.org",
     "w3.org",
     "websocket.app",
     "request.app",
-    "pytest.org",
-    "python.org",
-    "img.shields.io",
 }
 
 ALLOWLIST_IPS = {
     "10.0.0.0",
     "127.0.0.1",
+    "192.0.2.1",
+}
+
+ALLOWLIST_SECRETS = {
+    "AKIAIOSFODNN7EXAMPLE",
 }
 
 PATTERNS = [
@@ -31,6 +34,7 @@ PATTERNS = [
     ("ip", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("private_key", re.compile(r"-----BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY-----")),
     ("domain", re.compile(r"\b[a-zA-Z0-9-]+\.(com|net|org|io|ai|dev|app|co)\b")),
 ]
 
@@ -39,6 +43,7 @@ REPLACEMENTS = {
     "ip": "10.0.0.0",
     "github_token": "REDACTED_TOKEN",
     "aws_access_key": "REDACTED_AWS_KEY",
+    "private_key": "REDACTED_PRIVATE_KEY",
     "domain": "example.internal",
 }
 
@@ -47,7 +52,7 @@ def is_allowed_domain(value: str) -> bool:
     return value.lower() in ALLOWLIST_DOMAINS
 
 
-def scan_text(text):
+def scan_text(text: str):
     hits = []
     for name, rx in PATTERNS:
         for m in rx.finditer(text):
@@ -60,11 +65,13 @@ def scan_text(text):
                     continue
             if name == "ip" and value in ALLOWLIST_IPS:
                 continue
+            if name in {"aws_access_key", "github_token", "private_key"} and value in ALLOWLIST_SECRETS:
+                continue
             hits.append((name, value))
     return hits
 
 
-def redact_text(text):
+def redact_text(text: str) -> str:
     for name, rx in PATTERNS:
         text = rx.sub(REPLACEMENTS[name], text)
     return text
@@ -74,9 +81,13 @@ def iter_files(root: Path):
     for path in root.rglob("*"):
         if path.is_dir():
             continue
-        if ".git" in path.parts or "__pycache__" in path.parts:
+        if ".git" in path.parts:
             continue
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".pyc"}:
+        if ".pytest_cache" in path.parts:
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf"}:
             continue
         yield path
 

@@ -8,6 +8,9 @@
   </p>
 
 [![CI](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml)
+[![Hygiene](https://github.com/tannernicol/agent-conclave/actions/workflows/hygiene.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/hygiene.yml)
+[![Security](https://github.com/tannernicol/agent-conclave/actions/workflows/security.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/security.yml)
+[![SBOM](https://github.com/tannernicol/agent-conclave/actions/workflows/sbom.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/sbom.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 </div>
@@ -16,6 +19,10 @@
 
 <p align="center">
   <img src="docs/dashboard.svg" alt="Conclave web dashboard" width="700" />
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" alt="Conclave synthetic 60-second demo" width="700" />
 </p>
 
 ## The Problem
@@ -28,6 +35,21 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 
 **One query in, one verdict out. No more copy-paste consensus.**
 
+## At a Glance
+
+- Multi-model consensus for engineering and security decisions
+- Deterministic, replayable deliberation traces for auditability
+- Provider-agnostic orchestration across local and API-backed models
+- Configurable quality gates and policy guardrails
+- Redaction tooling and public-scope docs for safe OSS publishing
+
+## Engineering Signal (Employer Skim)
+
+- Designs multi-agent orchestration with deterministic audit traces
+- Ships with CI gates: tests, hygiene, security scanning, SBOM
+- Documents threat model and production hardening path
+- Demonstrates privacy-safe OSS discipline with synthetic artifacts
+
 ## Key Features
 
 - **Model-agnostic** — Ollama, OpenAI, Anthropic, or any combination
@@ -37,6 +59,18 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 - **Full audit trails** — every chain of thought saved as replayable JSON
 - **Web dashboard** — real-time deliberation view with verdict, findings, and model tabs
 
+## When to Use
+
+- Architecture or design decisions where model disagreement is expected
+- Security or reliability reviews that need explicit rationale
+- Repeatable decision workflows that need audit trails
+
+## When Not to Use
+
+- Single-step tasks where one model is sufficient
+- Latency-critical user flows requiring immediate responses
+- Workloads where a deterministic rule engine is more appropriate
+
 ## Quick start
 
 ```bash
@@ -44,6 +78,7 @@ git clone https://github.com/tannernicol/agent-conclave.git
 cd agent-conclave
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e ".[dev]"
 
 cp config/example.yaml config/local.yaml
 # Edit config/local.yaml with your model endpoints
@@ -64,6 +99,56 @@ $ conclave run --query "Is this deployment safe to ship?"
 3. **Iterate** — models see each other's responses and refine (simulated annealing controls exploration)
 4. **Converge** — stops when consensus threshold is met or max rounds reached
 5. **Audit** — full decision trace written to JSON for reproducibility
+
+## Synthetic Benchmarks
+
+```bash
+python scripts/benchmark_synthetic.py --format markdown
+python scripts/benchmark_synthetic.py --format json --output docs/benchmarks.synthetic.json
+```
+
+Reference:
+
+- `docs/benchmarks.md`
+- `docs/benchmarks.synthetic.md`
+
+## Validation
+
+```bash
+python -m pytest tests/ -q
+python scripts/redact.py --self-check
+```
+
+## Engineering Quality
+
+- CI matrix on Python 3.10/3.11/3.12 for every push and PR
+- Pre-commit + redaction checks as mandatory hygiene gates
+- CodeQL and weekly dependency audit automation
+- SBOM generation on PRs and tagged releases
+- Dependabot updates for both Python and GitHub Actions
+
+## Documentation
+
+- [Sanitized Workflow Example](examples/sanitized_workflow.md)
+- [Threat Model](docs/threat-model.md)
+- [Production Hardening Checklist](docs/hardening-checklist.md)
+- [Release Policy](docs/release-policy.md)
+- [Changelog](CHANGELOG.md)
+- [Good First Issues](docs/good-first-issues.md)
+- [Cross-Repo Stack Demo](docs/stack-demo.md)
+
+## Public Hygiene
+
+Reference:
+
+- [Security Policy](SECURITY.md)
+- [Public Scope](docs/public-scope.md)
+- [Redaction Policy](docs/redaction-policy.md)
+- `scripts/configure_branch_protection.sh tannernicol/agent-conclave main`
+
+## Related Repos
+
+- [Open Source Portfolio Index](docs/portfolio-index.md)
 
 ## Author
 
