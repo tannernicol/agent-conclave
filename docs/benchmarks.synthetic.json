@@ -1,0 +1,27 @@
+{
+  "project": "Agent Conclave",
+  "synthetic": true,
+  "metrics": [
+    {
+      "scenario": "3-model consensus",
+      "p50_ms": 420,
+      "p95_ms": 790,
+      "cpu_pct": 34,
+      "mem_mb": 410
+    },
+    {
+      "scenario": "5-model consensus",
+      "p50_ms": 690,
+      "p95_ms": 1210,
+      "cpu_pct": 49,
+      "mem_mb": 620
+    },
+    {
+      "scenario": "policy-gated review",
+      "p50_ms": 510,
+      "p95_ms": 930,
+      "cpu_pct": 38,
+      "mem_mb": 470
+    }
+  ]
+}

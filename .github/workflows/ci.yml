@@ -49,6 +49,11 @@ jobs:
         run: |
           python examples/demo.py --list
 
+      - name: Generate synthetic benchmarks
+        run: |
+          python scripts/benchmark_synthetic.py --format markdown --output /tmp/bench.md
+          python scripts/benchmark_synthetic.py --format json --output /tmp/bench.json
+
       - name: Redaction check
         run: |
           python scripts/redact.py --self-check

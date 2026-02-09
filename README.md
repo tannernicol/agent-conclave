@@ -21,6 +21,10 @@
   <img src="docs/dashboard.svg" alt="Conclave web dashboard" width="700" />
 </p>
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Conclave synthetic 60-second demo" width="700" />
+</p>
+
 ## The Problem
 
 You're making a high-stakes decision — shipping a deploy, choosing an architecture, reviewing a security change. You ask Claude. Then you ask GPT. Then you ask Llama. You copy-paste between tabs, mentally diff the answers, and try to synthesize a verdict. Every time.
@@ -47,6 +51,18 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 - **Policy guardrails** — enforce constraints on sensitive workflows
 - **Full audit trails** — every chain of thought saved as replayable JSON
 - **Web dashboard** — real-time deliberation view with verdict, findings, and model tabs
+
+## When to Use
+
+- Architecture or design decisions where model disagreement is expected
+- Security or reliability reviews that need explicit rationale
+- Repeatable decision workflows that need audit trails
+
+## When Not to Use
+
+- Single-step tasks where one model is sufficient
+- Latency-critical user flows requiring immediate responses
+- Workloads where a deterministic rule engine is more appropriate
 
 ## Quick start
 
@@ -77,6 +93,18 @@ $ conclave run --query "Is this deployment safe to ship?"
 4. **Converge** — stops when consensus threshold is met or max rounds reached
 5. **Audit** — full decision trace written to JSON for reproducibility
 
+## Synthetic Benchmarks
+
+```bash
+python scripts/benchmark_synthetic.py --format markdown
+python scripts/benchmark_synthetic.py --format json --output docs/benchmarks.synthetic.json
+```
+
+Reference:
+
+- `docs/benchmarks.md`
+- `docs/benchmarks.synthetic.md`
+
 ## Validation
 
 ```bash
@@ -92,6 +120,16 @@ python scripts/redact.py --self-check
 - SBOM generation on PRs and tagged releases
 - Dependabot updates for both Python and GitHub Actions
 
+## Documentation
+
+- [Sanitized Workflow Example](examples/sanitized_workflow.md)
+- [Threat Model](docs/threat-model.md)
+- [Production Hardening Checklist](docs/hardening-checklist.md)
+- [Release Policy](docs/release-policy.md)
+- [Changelog](CHANGELOG.md)
+- [Good First Issues](docs/good-first-issues.md)
+- [Cross-Repo Stack Demo](docs/stack-demo.md)
+
 ## Public Hygiene
 
 Reference:
@@ -100,6 +138,10 @@ Reference:
 - [Public Scope](docs/public-scope.md)
 - [Redaction Policy](docs/redaction-policy.md)
 - `scripts/configure_branch_protection.sh tannernicol/agent-conclave main`
+
+## Related Repos
+
+- [Open Source Portfolio Index](docs/portfolio-index.md)
 
 ## Author
 

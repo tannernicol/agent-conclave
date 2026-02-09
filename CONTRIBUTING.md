@@ -24,3 +24,8 @@ python scripts/redact.py --self-check
 - Include tests for behavior changes.
 - Update docs and examples when interfaces change.
 - Do not include real credentials, internal domains, private IPs, or personal data.
+
+## Starter Tasks
+
+- See docs/good-first-issues.md for contributor-friendly tasks with acceptance criteria.
+- Follow docs/release-policy.md when preparing release-impacting changes.
