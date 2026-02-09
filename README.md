@@ -1,8 +1,19 @@
 # Conclave -- Multi-Agent Consensus Engine
 
+[![CI](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 **Orchestrate multiple LLMs into auditable, high-confidence decisions through structured deliberation.**
 
 Conclave is a model orchestration engine that routes questions through a multi-round Reasoner/Critic deliberation loop, uses simulated annealing to optimize across iterations, and produces versioned consensus decisions backed by a full audit trail.
+
+## At a Glance
+
+- Multi-model consensus engine for technical and high-stakes decisions
+- Structured reasoner/critic rounds with configurable convergence rules
+- Audit-first design with replayable decision traces
+- Local-first and provider-agnostic model routing
 
 ```
                           +------------------+
@@ -245,6 +256,20 @@ quality:
 ```bash
 python -m pytest tests/ -v
 ```
+
+## Public Hygiene
+
+Before publishing docs, logs, or examples:
+
+```bash
+python scripts/redact.py --self-check
+```
+
+Reference:
+
+- [Security Policy](SECURITY.md)
+- [Public Scope](docs/public-scope.md)
+- [Redaction Policy](docs/redaction-policy.md)
 
 ## License
 
