@@ -1,13 +1,14 @@
 # Public Scope
 
-This file defines what is safe to publish.
-
 ## Allowed
+
 - High-level architecture and flow diagrams
-- Public tool names and generic config examples
-- Demo outputs with synthetic data
+- Generic configuration examples
+- Synthetic demo outputs and traces
+- Public provider/API references
 
 ## Not Allowed
-- Real domains, IPs, credentials, or customer data
-- Internal hostnames or personal identifiers
-- Unredacted logs or config files
+
+- Real credentials, tokens, or private keys
+- Internal domains, private IPs, or hostnames
+- Customer data or proprietary internal findings

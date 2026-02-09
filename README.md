@@ -28,6 +28,14 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 
 **One query in, one verdict out. No more copy-paste consensus.**
 
+## At a Glance
+
+- Multi-model consensus for engineering and security decisions
+- Deterministic, replayable deliberation traces for auditability
+- Provider-agnostic orchestration across local and API-backed models
+- Configurable quality gates and policy guardrails
+- Redaction tooling and public-scope docs for safe OSS publishing
+
 ## Key Features
 
 - **Model-agnostic** — Ollama, OpenAI, Anthropic, or any combination
@@ -44,6 +52,7 @@ git clone https://github.com/tannernicol/agent-conclave.git
 cd agent-conclave
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e ".[dev]"
 
 cp config/example.yaml config/local.yaml
 # Edit config/local.yaml with your model endpoints
@@ -64,6 +73,21 @@ $ conclave run --query "Is this deployment safe to ship?"
 3. **Iterate** — models see each other's responses and refine (simulated annealing controls exploration)
 4. **Converge** — stops when consensus threshold is met or max rounds reached
 5. **Audit** — full decision trace written to JSON for reproducibility
+
+## Validation
+
+```bash
+python -m pytest tests/ -q
+python scripts/redact.py --self-check
+```
+
+## Public Hygiene
+
+Reference:
+
+- [Security Policy](SECURITY.md)
+- [Public Scope](docs/public-scope.md)
+- [Redaction Policy](docs/redaction-policy.md)
 
 ## Author
 

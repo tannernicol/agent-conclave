@@ -1,14 +1,25 @@
 # Redaction Policy
 
-This repo is private until all sensitive details are scrubbed.
+Sanitize examples, logs, screenshots, and reports before publishing.
 
-## Remove or Replace
-- Domains and hostnames (replace with `example.internal`)
-- IP addresses (replace with `10.0.0.0/24`)
-- Usernames and emails (replace with `user@example.com`)
-- Tokens, API keys, secrets (remove entirely)
-- Internal paths and service names (use placeholders)
+## Always Redact
+
+- Emails and usernames
+- Credentials, API keys, and tokens
+- Internal domains, hostnames, and private IPs
+- Any customer or proprietary incident data
+
+## Safe Replacements
+
+- Email: `user@example.com`
+- Domain: `example.internal`
+- IP: `10.0.0.0`
+- Secret: `REDACTED`
 
 ## Verification
-- Run `scripts/redact.py --self-check`
-- Manually review diffs before pushing
+
+Run:
+
+```bash
+python scripts/redact.py --self-check
+```
