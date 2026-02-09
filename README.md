@@ -8,6 +8,9 @@
   </p>
 
 [![CI](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/ci.yml)
+[![Hygiene](https://github.com/tannernicol/agent-conclave/actions/workflows/hygiene.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/hygiene.yml)
+[![Security](https://github.com/tannernicol/agent-conclave/actions/workflows/security.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/security.yml)
+[![SBOM](https://github.com/tannernicol/agent-conclave/actions/workflows/sbom.yml/badge.svg)](https://github.com/tannernicol/agent-conclave/actions/workflows/sbom.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 </div>
@@ -81,6 +84,14 @@ python -m pytest tests/ -q
 python scripts/redact.py --self-check
 ```
 
+## Engineering Quality
+
+- CI matrix on Python 3.10/3.11/3.12 for every push and PR
+- Pre-commit + redaction checks as mandatory hygiene gates
+- CodeQL and weekly dependency audit automation
+- SBOM generation on PRs and tagged releases
+- Dependabot updates for both Python and GitHub Actions
+
 ## Public Hygiene
 
 Reference:
@@ -88,6 +99,7 @@ Reference:
 - [Security Policy](SECURITY.md)
 - [Public Scope](docs/public-scope.md)
 - [Redaction Policy](docs/redaction-policy.md)
+- `scripts/configure_branch_protection.sh tannernicol/agent-conclave main`
 
 ## Author
 
