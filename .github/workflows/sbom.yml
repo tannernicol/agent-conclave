@@ -27,7 +27,7 @@ jobs:
       - name: Generate SBOM
         run: cyclonedx-py requirements -i requirements.txt -o sbom.json
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sbom-${{ github.sha }}
           path: sbom.json
