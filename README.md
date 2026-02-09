@@ -43,6 +43,13 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 - Configurable quality gates and policy guardrails
 - Redaction tooling and public-scope docs for safe OSS publishing
 
+## Engineering Signal (Employer Skim)
+
+- Designs multi-agent orchestration with deterministic audit traces
+- Ships with CI gates: tests, hygiene, security scanning, SBOM
+- Documents threat model and production hardening path
+- Demonstrates privacy-safe OSS discipline with synthetic artifacts
+
 ## Key Features
 
 - **Model-agnostic** — Ollama, OpenAI, Anthropic, or any combination
