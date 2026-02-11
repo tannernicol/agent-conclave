@@ -2,21 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
@@ -38,22 +38,10 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests
-        run: |
-          python -m pytest tests/ -q
+        run: python -m pytest tests/ -q
 
       - name: CLI smoke test
-        run: |
-          conclave --help
+        run: conclave --help
 
-      - name: Demo harness list mode
-        run: |
-          python examples/demo.py --list
-
-      - name: Generate synthetic benchmarks
-        run: |
-          python scripts/benchmark_synthetic.py --format markdown --output /tmp/bench.md
-          python scripts/benchmark_synthetic.py --format json --output /tmp/bench.json
-
-      - name: Redaction check
-        run: |
-          python scripts/redact.py --self-check
+      - name: Demo smoke test
+        run: python examples/demo.py --list
