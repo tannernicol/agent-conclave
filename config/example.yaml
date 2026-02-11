@@ -2,11 +2,31 @@ project:
   name: agent-conclave
   mode: local
 
+# Configure your model panel — Conclave queries all models in parallel
+# and iterates until they converge on a consensus.
 models:
-  - name: local-ollama
+  - name: ollama-llama
+    type: ollama
+    endpoint: http://localhost:11434
+    model: llama3.2
+
+  - name: ollama-qwen
     type: ollama
     endpoint: http://localhost:11434
     model: qwen2.5:7b
+
+  # Uncomment to add hosted models:
+  # - name: claude
+  #   type: anthropic
+  #   model: claude-sonnet-4-5-20250929
+  # - name: gpt4
+  #   type: openai
+  #   model: gpt-4o
+
+consensus:
+  strategy: majority        # majority | unanimous | weighted
+  max_rounds: 3             # iterate until convergence or max rounds
+  temperature_schedule: anneal  # anneal | fixed | decay
 
 policy:
   require_human_approval: true

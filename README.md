@@ -40,19 +40,22 @@ Conclave automates multi-model deliberation. Send one query, get structured cons
 git clone https://github.com/tannernicol/agent-conclave.git
 cd agent-conclave
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
-cp config/example.yaml config/local.yaml
-# Edit config/local.yaml with your model endpoints
+# Edit config/example.yaml with your model endpoints
+# (defaults to two local Ollama models)
 
-python scripts/demo.py --config config/local.yaml
+python examples/demo.py --list          # see built-in demo questions
+python -m pytest tests/ -q              # run tests
 ```
 
 ```
-$ conclave run --panel claude,gpt4,llama \
-    "Is this deployment safe to ship?"
-→ Panel: 3 models, 12 reasoning chains
-→ Verdict: HOLD (2-1) — claude flagged auth regression
+$ python examples/demo.py --list
+Available demo questions:
+  1. [creative]     What are the top 3 sci-fi films of all time and why?
+  2. [research]     If humanity could only bring one invention to Mars...
+  3. [code_review]  Functional vs OOP for large-scale systems?
+  4. [general]      Most impactful invention of the last 100 years?
 ```
 
 ## How It Works

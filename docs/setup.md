@@ -1,7 +1,7 @@
 # Setup Guide
 
 ## Prerequisites
-- Python 3.11+
+- Python 3.10+
 - `pip` or `uv`
 
 ## Step 1: Environment
