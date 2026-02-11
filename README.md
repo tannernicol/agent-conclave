@@ -66,6 +66,25 @@ Available demo questions:
 4. **Converge** — stops when consensus threshold is met or max rounds reached
 5. **Audit** — full decision trace written to JSON for reproducibility
 
+## Agent Bus
+
+Conclave includes a lightweight JSONL message bus for inter-agent coordination. Agents append messages to a shared file and read from cursor-tracked positions — no server process needed.
+
+```python
+from conclave.bus import MessageBus
+
+bus = MessageBus("/tmp/conclave-bus")
+bus.post("reviewer", subject="Found regression", body="Auth test failing", auto_inject=True)
+
+# Another agent reads new messages
+msgs = bus.read("fixer")
+
+# Get injectable context for an LLM prompt
+context = bus.format_context("fixer")
+```
+
+Messages support priority levels, TTL expiration, recipient filtering, and auto-injection into LLM context windows. See `examples/multi_agent.py` for a full walkthrough.
+
 ## Requirements
 
 - Python 3.10+
