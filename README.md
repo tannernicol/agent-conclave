@@ -85,6 +85,50 @@ context = bus.format_context("fixer")
 
 Messages support priority levels, TTL expiration, recipient filtering, and auto-injection into LLM context windows. See `examples/multi_agent.py` for a full walkthrough.
 
+## Threat Model
+
+**In scope — what Conclave defends against:**
+
+- **Model disagreement masking** — a single model's hallucination or confident-but-wrong answer is surfaced by cross-validation from other models, not silently accepted
+- **Prompt drift across rounds** — simulated annealing and convergence thresholds prevent models from wandering off-topic during multi-round deliberation
+- **Audit gap** — every deliberation round, every chain of thought, and every vote is persisted as replayable JSON; decisions are never opaque
+- **Vendor lock-in** — model-agnostic design means no single provider failure degrades the system; swap Ollama, OpenAI, or Anthropic without code changes
+
+**Out of scope — what Conclave intentionally does not defend against:**
+
+- **Compromised model backends** — if an upstream API or local Ollama instance is serving poisoned weights, Conclave has no way to detect that; it trusts model outputs at face value
+- **Prompt injection in the query itself** — Conclave passes user queries to models without sanitization; adversarial prompts embedded in the input will reach all panelists
+- **Confidentiality of deliberation content** — queries and responses are sent to whichever model backends are configured, including cloud APIs; do not send secrets through cloud-routed panels
+- **Consensus correctness** — agreement among models does not guarantee factual accuracy; Conclave reduces variance, not ground-truth error
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User([User / CLI])
+    Config[config/local.yaml]
+
+    User -->|query| Orchestrator
+    Config -->|model endpoints\n+ rubrics| Orchestrator
+
+    subgraph Conclave Engine
+        Orchestrator[Orchestrator]
+        Orchestrator -->|fan-out| M1[Model A\ne.g. Claude]
+        Orchestrator -->|fan-out| M2[Model B\ne.g. GPT]
+        Orchestrator -->|fan-out| M3[Model C\ne.g. Llama]
+        M1 -->|response| Scorer[Rubric Scorer]
+        M2 -->|response| Scorer
+        M3 -->|response| Scorer
+        Scorer -->|scored responses| Annealing[Simulated Annealing\nConvergence Check]
+        Annealing -->|iterate| Orchestrator
+        Annealing -->|converged| Verdict[Verdict]
+    end
+
+    Verdict -->|JSON audit trail| AuditLog[(Audit Log)]
+    Verdict -->|result| Dashboard[Web Dashboard]
+    Verdict -->|result| User
+```
+
 ## Requirements
 
 - Python 3.10+
