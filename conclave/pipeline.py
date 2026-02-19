@@ -1610,31 +1610,7 @@ class ConclavePipeline:
             if self._run_id:
                 self.store.append_event(self._run_id, {"phase": "deliberate", **payload})
 
-        def _summary_line(text: str, max_chars: int = 120) -> str:
-            if not text:
-                return ""
-            import re
-            # Find first non-empty, non-heading line
-            for line in text.splitlines():
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                # Skip markdown headings
-                if stripped.startswith("#"):
-                    continue
-                # Skip lines that are only markdown formatting (bold headers, etc.)
-                plain = re.sub(r'[*_#`~>\-=|]', '', stripped).strip()
-                if not plain:
-                    continue
-                text = stripped
-                break
-            # Strip markdown bold/italic markers for cleaner display
-            text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
-            text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
-            text = text.strip()
-            if len(text) <= max_chars:
-                return text
-            return text[: max_chars - 3].rstrip() + "..."
+        _summary_line = ConclavePipeline._summary_line
 
         for round_idx in range(1, max_rounds + 1):
             _emit_deliberate({"status": "round_start", "round": round_idx, "max_rounds": max_rounds})
@@ -2028,6 +2004,31 @@ class ConclavePipeline:
         return round(min(1.0, max(0.0, score)), 3)
 
     @staticmethod
+    def _summary_line(text: str, max_chars: int = 120) -> str:
+        """Extract first meaningful line from text, stripping markdown."""
+        if not text:
+            return ""
+        import re
+        # Find first non-empty, non-heading line
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            plain = re.sub(r'[*_#`~>\-=|]', '', stripped).strip()
+            if not plain:
+                continue
+            text = stripped
+            break
+        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+        text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
+        text = text.strip()
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 3].rstrip() + "..."
+
+    @staticmethod
     def _text_similarity(a: str, b: str) -> float:
         """Jaccard similarity on word trigrams."""
         if not a or not b:
@@ -2108,6 +2109,14 @@ class ConclavePipeline:
         ensure_required(current_route)
         finalize_route(current_route)
         self._apply_output_meta(context, output_type, current_route)
+
+        if self._run_id:
+            self.store.append_event(self._run_id, {
+                "phase": "annealing", "status": "iteration_start",
+                "iteration": 1, "max_iterations": max_iterations,
+                "temperature": round(self._anneal_value(temp_start, temp_end, 1, max_iterations, schedule), 2),
+            })
+
         current_deliberation = self._deliberate(query, context, current_route)
         current_score = self._deliberation_score(current_deliberation)
         best_route = current_route
@@ -2115,6 +2124,7 @@ class ConclavePipeline:
         best_score = current_score
         no_improve = 0
 
+        answer_text_1 = str((current_deliberation.get("rounds") or [{}])[-1].get("reasoner", "")) if current_deliberation.get("rounds") else ""
         iterations.append({
             "iteration": 1,
             "accepted": True,
@@ -2127,6 +2137,17 @@ class ConclavePipeline:
                 "panel_models": current_route.get("panel_models"),
             },
         })
+
+        if self._run_id:
+            self.store.append_event(self._run_id, {
+                "phase": "annealing", "status": "iteration_done",
+                "iteration": 1, "max_iterations": max_iterations,
+                "score": round(current_score, 4),
+                "best_score": round(best_score, 4),
+                "accepted": True,
+                "agreement": bool(current_deliberation.get("agreement")),
+                "summary": ConclavePipeline._summary_line(answer_text_1),
+            })
 
         content_stable_count = 0
         best_answer = str((best_deliberation.get("rounds") or [{}])[-1].get("reasoner", "")) if best_deliberation.get("rounds") else ""
@@ -2144,6 +2165,14 @@ class ConclavePipeline:
             if perturb_prompt and perturbation_phrases:
                 perturbation_used = rng.choice(perturbation_phrases) if hasattr(rng, 'choice') else random.choice(perturbation_phrases)
                 perturbed_query = f"{perturbation_used}\n\n{query}"
+
+            if self._run_id:
+                self.store.append_event(self._run_id, {
+                    "phase": "annealing", "status": "iteration_start",
+                    "iteration": idx, "max_iterations": max_iterations,
+                    "temperature": round(temperature, 2),
+                    "perturbation": perturbation_used,
+                })
 
             candidate_route = self._route_query(
                 perturbed_query,
@@ -2217,6 +2246,17 @@ class ConclavePipeline:
             if perturbation_used:
                 iteration_data["perturbation"] = perturbation_used
             iterations.append(iteration_data)
+
+            if self._run_id:
+                self.store.append_event(self._run_id, {
+                    "phase": "annealing", "status": "iteration_done",
+                    "iteration": idx, "max_iterations": max_iterations,
+                    "score": round(candidate_score, 4),
+                    "best_score": round(best_score, 4),
+                    "accepted": accepted,
+                    "agreement": bool(candidate_deliberation.get("agreement")),
+                    "summary": ConclavePipeline._summary_line(candidate_answer),
+                })
 
             if stable_rounds and no_improve >= stable_rounds:
                 break

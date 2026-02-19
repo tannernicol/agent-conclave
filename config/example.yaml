@@ -48,9 +48,27 @@ deliberation:
     # include_plan_models: false
     # max_rounds: 1
 
-# Disable extras for simple setup
+# Simulated annealing — run N deliberations with decreasing randomness,
+# keep the best. Great for subjective queries where you want diverse
+# perspectives converging on an optimal answer.
 annealing:
   enabled: false
+  # max_iterations: 3              # number of deliberation runs
+  # stable_rounds: 2               # stop early after N runs with no improvement
+  # schedule: linear               # temperature decay: linear or exponential
+  # temperature_start: 1.2         # initial randomness
+  # temperature_end: 0.3           # final randomness
+  # noise_start: 0.18              # initial planning noise
+  # noise_end: 0.05                # final planning noise
+  # perturb_prompt: true            # prepend a perspective-shift each run
+  # perturbation_phrases:
+  #   - "Consider contrarian viewpoints."
+  #   - "Focus on practical constraints."
+  #   - "Prioritize cost-effectiveness."
+  #   - "Weight long-term outcomes heavily."
+  #   - "Consider what could go wrong."
+  # content_convergence: true       # detect when answers stabilize
+  # similarity_threshold: 0.85      # how similar = "converged"
 
 diversity_check:
   enabled: false

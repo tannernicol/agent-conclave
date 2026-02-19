@@ -59,6 +59,51 @@ $ conclave run --query "Is a hot dog a sandwich?" --progress
   Claude flags it works but could break on edge cases (pita?).
 ```
 
+### Annealing: Multi-Run Convergence
+
+For subjective questions, a single deliberation might miss the best answer. **Simulated annealing** runs multiple deliberations with decreasing randomness — each run considers a different perspective, and the best-scoring answer wins.
+
+```
+$ conclave run \
+    --query "What is the single best rain jacket to own if you live in Seattle?" \
+    --max-seconds 900 --no-fail-on-insufficient --progress
+
+14:19:44 route done  reasoner->codex  critic->claude  summarizer->claude
+14:19:54 anneal run 1/3 start T=1.2
+14:19:54 deliberate round 1/5 start
+14:19:54 deliberate round 1/5 reasoner->codex thinking... (timeout 300s)
+14:20:28 deliberate round 1/5 reasoner->codex done (33s) — Product Recommendation
+14:20:28 deliberate round 1/5 critic->claude thinking... (timeout 300s)
+14:21:21 deliberate round 1/5 critic->claude done (53s) — AGREE: Breathability weighting understated...
+14:21:21 deliberate round 1 ☁️ white smoke AGREE
+14:21:21 anneal run 1/3 accepted score=0.8 best=0.8
+
+14:21:21 anneal run 2/3 start T=0.75 "Consider what could go wrong."
+14:21:21 deliberate round 1/5 reasoner->codex thinking...
+14:22:19 deliberate round 1/5 reasoner->codex done (58s) — Product Recommendation
+14:22:57 deliberate round 1/5 critic->claude done (37s) — DISAGREE: daily-wear tradeoff ignored...
+14:22:57 deliberate round 1 ▇▇ black smoke DISAGREE (3 issues)
+14:23:22 deliberate round 2/5 reasoner->codex done (25s) — Single Best Pick
+14:23:58 deliberate round 2/5 critic->claude done (36s) — AGREE: daily-wear tradeoff resolved
+14:23:58 deliberate round 2 ☁️ white smoke AGREE
+14:23:58 anneal run 2/3 accepted score=0.78 best=0.8
+
+14:23:58 anneal run 3/3 start T=0.3 "Focus on practical constraints."
+14:24:35 deliberate round 1/5 reasoner->codex done (37s) — Product Recommendation
+14:25:09 deliberate round 1/5 critic->claude done (34s) — AGREE
+14:25:09 deliberate round 1 ☁️ white smoke AGREE
+14:25:09 anneal run 3/3 accepted score=0.8 best=0.8
+14:25:09 anneal done (3 runs, best=0.8)
+
+→ Patagonia Torrentshell 3L (~$179) — 3-layer waterproof,
+  pit zips for Seattle's humid drizzle, Ironclad Guarantee.
+  Run 2's "what could go wrong" lens caught the daily-wear
+  tradeoff that Run 1 missed (Gore-Tex shells are overkill).
+  Confidence: medium
+```
+
+Each run used a different **perturbation** — a perspective-shift prepended to the query. Run 2's "consider what could go wrong" forced the Critic to flag that a technical shell isn't the best *daily* jacket, producing a more nuanced final answer than any single deliberation would.
+
 ## How It Works
 
 1. **Route** — assigns roles based on model strengths (Reasoner, Critic, Summarizer)

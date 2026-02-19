@@ -796,6 +796,22 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
                     extra = f"({len(disagreements)} issues)" if disagreements else ""
                     line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, smoke, verdict_text, extra] if part)
                     print(line.strip(), file=sys.stderr)
+                    if agreement:
+                        smoke_art = [
+                            "   ( )  ( )",
+                            "  (   )",
+                            " (     )",
+                        ]
+                        for puff in smoke_art:
+                            print(puff, file=sys.stderr)
+                        for i in range(3):
+                            dots = "." * (i + 1)
+                            sys.stderr.write(f"white smoke{dots}\r")
+                            sys.stderr.flush()
+                            time.sleep(0.08)
+                        sys.stderr.write("white smoke...    \r")
+                        sys.stderr.flush()
+                        sys.stderr.write("\n")
                     continue
                 if status == "stable":
                     consecutive = event.get("consecutive")
@@ -809,6 +825,33 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
                     continue
                 if status == "done":
                     print(f"{event.get('timestamp', '')} deliberate done".strip(), file=sys.stderr)
+                    continue
+            if phase == "annealing":
+                ts = event.get("timestamp", "")
+                iteration = event.get("iteration", "?")
+                max_iter = event.get("max_iterations", "?")
+                if status == "iteration_start":
+                    temp = event.get("temperature", "")
+                    perturbation = event.get("perturbation") or ""
+                    temp_text = f"T={temp}" if temp != "" else ""
+                    perturb_text = f'"{perturbation}"' if perturbation else ""
+                    line = " ".join(part for part in [ts, "anneal", f"run {iteration}/{max_iter}", "start", temp_text, perturb_text] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "iteration_done":
+                    score = event.get("score", "?")
+                    best = event.get("best_score", "?")
+                    accepted = "accepted" if event.get("accepted") else "rejected"
+                    summary = (event.get("summary") or "").strip().replace("\n", " ")
+                    summary_text = f"— {summary}" if summary else ""
+                    line = " ".join(part for part in [ts, "anneal", f"run {iteration}/{max_iter}", accepted, f"score={score}", f"best={best}", summary_text] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "done":
+                    iters = event.get("iterations", "?")
+                    best = event.get("best_score", "?")
+                    line = f"{ts} anneal done ({iters} runs, best={best})".strip()
+                    print(line, file=sys.stderr)
                     continue
             if role and model:
                 label = event.get("model_label") or model
