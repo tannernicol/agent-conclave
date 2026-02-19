@@ -33,7 +33,7 @@ from conclave.domains import get_domain_instructions
 from conclave.verification import OnDemandFetcher
 
 
-class RunTimeoutError(Exception):
+class RunTimeoutError(TimeoutError):
     """Raised when a pipeline run exceeds its timeout."""
     pass
 
@@ -890,6 +890,7 @@ class ConclavePipeline:
 
         output_type = meta.get("output_type") if meta else None
         image_paths = [item.get("path") for item in input_artifacts if item.get("kind") == "image" and item.get("path")]
+        vision_summary_text = ""
         if image_paths and self._output_requires(output_type, "image_understanding"):
             vision_prompt = (
                 "Summarize the attached photos for design decisions. "
@@ -898,9 +899,9 @@ class ConclavePipeline:
             )
             vision_summary, provider = self._vision_summary(vision_prompt, image_paths)
             if vision_summary:
+                vision_summary_text = vision_summary
                 if provider:
                     self._record_vision_usage(provider, len(image_paths))
-                context["vision_summary"] = vision_summary
                 source_items.append({
                     "path": f"{provider}://vision/summary",
                     "title": f"Vision Summary ({provider})",
@@ -961,7 +962,7 @@ class ConclavePipeline:
             stats["on_demand_errors"] = on_demand.errors
         if user_inputs:
             stats["input_path"] = user_inputs[0].get("path")
-        return {
+        result = {
             "rag": rag_results,
             "file_index": combined_files,
             "sources": source_items,
@@ -972,6 +973,9 @@ class ConclavePipeline:
             "previous_run": previous_run,
             "agent_sync": self._agent_sync_summary(),
         }
+        if vision_summary_text:
+            result["vision_summary"] = vision_summary_text
+        return result
 
     def _extract_focus_queries(self, instructions: str) -> list[str]:
         if not instructions:
@@ -2127,7 +2131,7 @@ class ConclavePipeline:
         best_score = current_score
         no_improve = 0
 
-        answer_text_1 = str((current_deliberation.get("rounds") or [{}])[-1].get("reasoner", "")) if current_deliberation.get("rounds") else ""
+        answer_text_1 = str(current_deliberation.get("reasoner", ""))
         iterations.append({
             "iteration": 1,
             "accepted": True,
@@ -2153,7 +2157,7 @@ class ConclavePipeline:
             })
 
         content_stable_count = 0
-        best_answer = str((best_deliberation.get("rounds") or [{}])[-1].get("reasoner", "")) if best_deliberation.get("rounds") else ""
+        best_answer = str(best_deliberation.get("reasoner", ""))
 
         for idx in range(2, max_iterations + 1):
             min_time_left = float(cfg.get("min_time_left_seconds", 0) or 0)
@@ -2198,7 +2202,7 @@ class ConclavePipeline:
 
             # Content convergence detection
             similarity = 0.0
-            candidate_answer = str((candidate_deliberation.get("rounds") or [{}])[-1].get("reasoner", "")) if candidate_deliberation.get("rounds") else ""
+            candidate_answer = str(candidate_deliberation.get("reasoner", ""))
             if content_convergence and best_answer and candidate_answer:
                 similarity = self._text_similarity(best_answer, candidate_answer)
                 if similarity >= similarity_threshold:
@@ -2348,7 +2352,8 @@ class ConclavePipeline:
     def _model_confidence_weight(self, model_id: str) -> float:
         """Get confidence weight for a model based on json_reliability capability."""
         card = self.registry.get_model(model_id) or {}
-        reliability = card.get("json_reliability", "medium")
+        caps = card.get("capabilities") or {}
+        reliability = caps.get("json_reliability", card.get("json_reliability", "medium"))
         # Weight mapping: high=1.0, medium=0.7, low=0.4
         weights = {"high": 1.0, "medium": 0.7, "low": 0.4}
         return weights.get(str(reliability).lower(), 0.7)
@@ -2631,7 +2636,9 @@ class ConclavePipeline:
                 artifacts.append(self._artifact_descriptor("output.md"))
             artifacts.extend(self._generate_output_artifacts(run_id, consensus, output_type, context))
             return str(path), artifacts
-        except Exception:
+        except Exception as exc:
+            if self._audit:
+                self._audit.log("output_file.error", {"error": str(exc)})
             return None, []
 
     def _disagreement_signature(self, disagreements: List[str]) -> str:
