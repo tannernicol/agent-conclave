@@ -1260,7 +1260,44 @@ function summarizeEvent(event, run, index) {
   }
   if (phase === 'deliberate') {
     const roundLabel = event.round ? `Round ${event.round}` : 'Deliberation';
+    const label = event.model_label || event.model_id || '';
+    const duration = typeof event.duration_s === 'number' ? `${event.duration_s.toFixed(1)}s` : '';
+    const summary = (event.summary || '').trim();
     const disagreementCount = (event.disagreements || []).length;
+    if (event.status === 'round_start') {
+      return `${roundLabel}: started`;
+    }
+    if (event.status === 'reasoner_start') {
+      return `${roundLabel}: reasoner thinking${label ? ` (${label})` : ''}`;
+    }
+    if (event.status === 'reasoner_done') {
+      return `${roundLabel}: reasoner draft${duration ? ` • ${duration}` : ''}${summary ? ` • ${summary}` : ''}`;
+    }
+    if (event.status === 'critic_start') {
+      return `${roundLabel}: critic reviewing${label ? ` (${label})` : ''}`;
+    }
+    if (event.status === 'critic_done') {
+      const verdict = event.verdict ? event.verdict.toUpperCase() : '';
+      return `${roundLabel}: critic ${verdict || 'done'}${duration ? ` • ${duration}` : ''}${summary ? ` • ${summary}` : ''}`;
+    }
+    if (event.status === 'panel_start') {
+      return `${roundLabel}: panel reviewing${label ? ` (${label})` : ''}`;
+    }
+    if (event.status === 'panel_done') {
+      const verdict = event.verdict ? event.verdict.toUpperCase() : '';
+      return `${roundLabel}: panel ${verdict || 'done'}${duration ? ` • ${duration}` : ''}${summary ? ` • ${summary}` : ''}`;
+    }
+    if (event.status === 'round_result') {
+      const verdict = event.agreement ? 'AGREE' : 'DISAGREE';
+      const issues = disagreementCount ? ` • ${disagreementCount} issue${disagreementCount === 1 ? '' : 's'}` : '';
+      return `${roundLabel}: ${verdict}${issues}`;
+    }
+    if (event.status === 'stable') {
+      return `${roundLabel}: stable disagreements detected`;
+    }
+    if (event.status === 'stop') {
+      return `${roundLabel}: stopping (${event.reason || 'done'})`;
+    }
     if (event.agreement === true) {
       return `${roundLabel}: consensus reached`;
     }

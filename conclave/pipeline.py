@@ -192,7 +192,10 @@ class ConclavePipeline:
         audit.log("run.start", {"query": query, "meta": meta or {}, "timeout": self.config.run_timeout_seconds})
         try:
             self.store.append_event(run_id, {"phase": "preflight", "status": "start"})
-            self._calibrate_models(run_id)
+            role_overrides = None
+            if meta and isinstance(meta.get("role_overrides"), dict):
+                role_overrides = meta.get("role_overrides")
+            self._calibrate_models(run_id, role_overrides=role_overrides)
             audit.log("preflight.complete")
             self._check_timeout("preflight")
 
@@ -223,9 +226,6 @@ class ConclavePipeline:
             agent_set = None
             if meta and meta.get("agent_set"):
                 agent_set = self._resolve_agent_set(str(meta.get("agent_set")))
-            role_overrides = None
-            if meta and isinstance(meta.get("role_overrides"), dict):
-                role_overrides = meta.get("role_overrides")
             domain_override = meta.get("domain") if meta else None
             route = self._route_query(
                 query,
@@ -509,9 +509,21 @@ class ConclavePipeline:
             except Exception:
                 pass
 
-    def _calibrate_models(self, run_id: str) -> None:
+    def _calibrate_models(self, run_id: str, role_overrides: Optional[Dict[str, str]] = None) -> None:
         calibration = self.config.calibration
         if not calibration.get("enabled", True):
+            return
+
+        overrides = role_overrides
+        if overrides is None:
+            overrides = self.config.planner.get("role_overrides") if isinstance(self.config.planner, dict) else None
+        override_keys = set((overrides or {}).keys())
+        if {"reasoner", "critic", "summarizer"}.issubset(override_keys):
+            self.store.append_event(run_id, {
+                "phase": "calibration",
+                "status": "skipped",
+                "reason": "all_roles_overridden",
+            })
             return
 
         # Check cache - skip calibration if recent enough
@@ -654,13 +666,19 @@ class ConclavePipeline:
         if role_overrides:
             base_overrides.update({str(k): str(v) for k, v in role_overrides.items() if str(k) and str(v)})
         planner = self.planner.with_overrides(base_overrides) if base_overrides else self.planner
-        plan_with_rationale = planner.plan_with_rationale(
-            roles,
-            registry,
-            budget_context=budget_context,
-            noise=plan_noise,
-            rng=rng,
-        )
+        if {"reasoner", "critic", "summarizer"}.issubset(set(base_overrides or {})):
+            plan_with_rationale = {
+                "assignments": {role: model_id for role, model_id in (base_overrides or {}).items() if model_id},
+                "rationale": {"fast_path": True, "role_overrides": base_overrides},
+            }
+        else:
+            plan_with_rationale = planner.plan_with_rationale(
+                roles,
+                registry,
+                budget_context=budget_context,
+                noise=plan_noise,
+                rng=rng,
+            )
         if isinstance(agent_set, dict) and agent_set.get("panel_models"):
             panel_models = [str(mid) for mid in agent_set.get("panel_models") if self.registry.get_model(str(mid))]
         else:
@@ -1586,7 +1604,25 @@ class ConclavePipeline:
         previous_disagreements: List[str] = []
         final_disagreements: List[str] = []
 
+        def _emit_deliberate(payload: Dict[str, Any]) -> None:
+            if self._run_id:
+                self.store.append_event(self._run_id, {"phase": "deliberate", **payload})
+
+        def _summary_line(text: str, max_chars: int = 120) -> str:
+            if not text:
+                return ""
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    text = stripped
+                    break
+            text = text.strip()
+            if len(text) <= max_chars:
+                return text
+            return text[: max_chars - 3].rstrip() + "..."
+
         for round_idx in range(1, max_rounds + 1):
+            _emit_deliberate({"status": "round_start", "round": round_idx, "max_rounds": max_rounds})
             remaining = self._time_remaining()
             if min_time_left and (remaining or 0) < min_time_left:
                 stop_reason = "timeout_guard"
@@ -1650,7 +1686,27 @@ class ConclavePipeline:
                     "Reconcile with the prior result. Include a short 'Reconciliation' section noting what changed and why. "
                     "If no material change, say 'No change' and explain stability.\n"
                 )
+            _emit_deliberate({
+                "status": "reasoner_start",
+                "round": round_idx,
+                "max_rounds": max_rounds,
+                "role": "reasoner",
+                "model_id": reasoner_model,
+                "model_label": self._model_label(reasoner_model) if reasoner_model else None,
+            })
+            reasoner_start = time.perf_counter()
             reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner", timeout_seconds=per_call_timeout)
+            reasoner_duration = time.perf_counter() - reasoner_start
+            _emit_deliberate({
+                "status": "reasoner_done",
+                "round": round_idx,
+                "max_rounds": max_rounds,
+                "role": "reasoner",
+                "model_id": reasoner_model,
+                "model_label": self._model_label(reasoner_model) if reasoner_model else None,
+                "duration_s": round(reasoner_duration, 2),
+                "summary": _summary_line(reasoner_out),
+            })
 
             critic_prompt = (
                 "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
@@ -1702,7 +1758,17 @@ class ConclavePipeline:
                             effective_panel_timeout = per_call_timeout
                         else:
                             effective_panel_timeout = min(int(effective_panel_timeout), int(per_call_timeout))
+                    _emit_deliberate({
+                        "status": "panel_start",
+                        "round": round_idx,
+                        "max_rounds": max_rounds,
+                        "role": "critic_panel",
+                        "model_id": model_id,
+                        "model_label": self._model_label(model_id),
+                    })
+                    panel_start = time.perf_counter()
                     review = self._call_model(model_id, critic_prompt, role="critic_panel", timeout_seconds=effective_panel_timeout)
+                    panel_duration = time.perf_counter() - panel_start
                     meta = self._last_model_results.get(model_id, {})
                     ok = meta.get("ok", True)
                     error = meta.get("error")
@@ -1715,6 +1781,17 @@ class ConclavePipeline:
                             skip_optional = True
                     verdict = self._critic_agrees(review) if ok else False
                     verdict_label = "agree" if verdict else ("skipped" if skip_optional else ("error" if not ok else "disagree"))
+                    _emit_deliberate({
+                        "status": "panel_done",
+                        "round": round_idx,
+                        "max_rounds": max_rounds,
+                        "role": "critic_panel",
+                        "model_id": model_id,
+                        "model_label": self._model_label(model_id),
+                        "duration_s": round(panel_duration, 2),
+                        "verdict": verdict_label,
+                        "summary": _summary_line(review),
+                    })
                     panel_reviews.append({
                         "model_id": model_id,
                         "label": self._model_label(model_id),
@@ -1787,8 +1864,29 @@ class ConclavePipeline:
                 })
                 rounds.append(round_entry)
             else:
+                _emit_deliberate({
+                    "status": "critic_start",
+                    "round": round_idx,
+                    "max_rounds": max_rounds,
+                    "role": "critic",
+                    "model_id": critic_model,
+                    "model_label": self._model_label(critic_model) if critic_model else None,
+                })
+                critic_start = time.perf_counter()
                 critic_out = self._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)
+                critic_duration = time.perf_counter() - critic_start
                 agreement = self._critic_agrees(critic_out)
+                _emit_deliberate({
+                    "status": "critic_done",
+                    "round": round_idx,
+                    "max_rounds": max_rounds,
+                    "role": "critic",
+                    "model_id": critic_model,
+                    "model_label": self._model_label(critic_model) if critic_model else None,
+                    "duration_s": round(critic_duration, 2),
+                    "verdict": "agree" if agreement else "disagree",
+                    "summary": _summary_line(critic_out),
+                })
                 round_entry = {
                     "round": round_idx,
                     "agreement": agreement,
@@ -1811,8 +1909,7 @@ class ConclavePipeline:
                 if diversity_entry:
                     diversity_checks.append(diversity_entry)
                     diversity_calls += 1
-            if self._run_id:
-                self.store.append_event(self._run_id, {"phase": "deliberate", **round_entry})
+            _emit_deliberate({"status": "round_result", **round_entry})
             previous_disagreements = list(round_entry.get("disagreements") or [])
             final_disagreements = list(round_entry.get("disagreements") or [])
             signature = self._disagreement_signature(round_entry.get("disagreements") or [])
@@ -1825,9 +1922,24 @@ class ConclavePipeline:
                 if stable_count >= stability_rounds and not agreement:
                     round_entry["stopped_reason"] = "stable_disagreements"
                     stop_reason = "stable_disagreements"
+                    _emit_deliberate({
+                        "status": "stable",
+                        "round": round_idx,
+                        "max_rounds": max_rounds,
+                        "consecutive": stable_count,
+                        "reason": stop_reason,
+                    })
                     break
             if agreement or not require_agreement:
                 break
+
+        if stop_reason:
+            _emit_deliberate({
+                "status": "stop",
+                "round": round_idx,
+                "max_rounds": max_rounds,
+                "reason": stop_reason,
+            })
 
         result = {
             "reasoner": reasoner_out,

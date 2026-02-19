@@ -751,6 +751,51 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
             role = event.get("role")
             model = event.get("model_id") or event.get("model")
             detail = ""
+            if phase == "deliberate":
+                round_idx = event.get("round")
+                max_rounds = event.get("max_rounds")
+                round_text = ""
+                if round_idx and max_rounds:
+                    round_text = f"round {round_idx}/{max_rounds}"
+                elif round_idx:
+                    round_text = f"round {round_idx}"
+                label = event.get("model_label") or model or ""
+                verdict = event.get("verdict")
+                duration = event.get("duration_s")
+                summary = (event.get("summary") or "").strip().replace("\n", " ")
+                if status == "round_start":
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, "start"] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status.endswith("_start") and label:
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, f"{role}->{label}" if role else label, "thinking..."] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status.endswith("_done") and label:
+                    duration_text = f"({duration}s)" if isinstance(duration, (int, float)) else ""
+                    verdict_text = f"{verdict.upper()}: " if verdict else ""
+                    summary_text = f"— {verdict_text}{summary}" if (verdict_text or summary) else ""
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, f"{role}->{label}" if role else label, "done", duration_text, summary_text] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "round_result":
+                    agreement = event.get("agreement")
+                    disagreements = event.get("disagreements") or []
+                    verdict_text = "AGREE" if agreement else "DISAGREE"
+                    extra = f"({len(disagreements)} issues)" if disagreements else ""
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, "result", verdict_text, extra] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "stable":
+                    consecutive = event.get("consecutive")
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", "stable", f"({consecutive}x)" if consecutive else "", "-", "stopping"] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "stop":
+                    reason = event.get("reason")
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", "stop", f"reason={reason}" if reason else ""] if part)
+                    print(line.strip(), file=sys.stderr)
+                    continue
             if role and model:
                 label = event.get("model_label") or model
                 detail = f"{role}->{label}"
