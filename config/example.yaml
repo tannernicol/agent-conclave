@@ -1,34 +1,56 @@
-project:
-  name: agent-conclave
-  mode: local
+# Agent Conclave — example configuration
+# Get a second AI opinion without being human middleware.
+#
+# Configure two or more models, assign roles, and let them debate.
+# White smoke when they agree, black smoke when they don't.
 
-# Configure your model panel — Conclave queries all models in parallel
-# and iterates until they converge on a consensus.
 models:
-  - name: ollama-llama
-    type: ollama
-    endpoint: http://localhost:11434
-    model: llama3.2
+  cards:
+    # Local models via Ollama (free, no API key)
+    - id: cli:llama
+      command: [ollama, run, llama3.2]
+      prompt_mode: arg
+      timeout_seconds: 120
 
-  - name: ollama-qwen
-    type: ollama
-    endpoint: http://localhost:11434
-    model: qwen2.5:7b
+    - id: cli:qwen
+      command: [ollama, run, qwen2.5:7b]
+      prompt_mode: arg
+      timeout_seconds: 120
 
-  # Uncomment to add hosted models:
-  # - name: claude
-  #   type: anthropic
-  #   model: claude-sonnet-4-5-20250929
-  # - name: gpt4
-  #   type: openai
-  #   model: gpt-4o
+    # Uncomment to use hosted models instead:
+    # - id: cli:claude
+    #   command: [claude, --print, --model, sonnet, --output-format, text]
+    #   prompt_mode: arg
+    #   timeout_seconds: 300
+    # - id: cli:codex
+    #   command: [codex, exec, --ephemeral, --sandbox, read-only]
+    #   prompt_mode: stdin
+    #   stdin_flag: "-"
+    #   timeout_seconds: 300
 
-consensus:
-  strategy: majority        # majority | unanimous | weighted
-  max_rounds: 3             # iterate until convergence or max rounds
-  temperature_schedule: anneal  # anneal | fixed | decay
+# Assign roles — who argues FOR, who argues AGAINST
+planner:
+  role_overrides:
+    reasoner: cli:llama       # builds the case
+    critic: cli:qwen          # tears it apart
+    summarizer: cli:qwen      # synthesizes the verdict
 
-policy:
-  require_human_approval: true
-  block_tool_calls: true
-  log_outputs: true
+# Deliberation settings
+deliberation:
+  max_rounds: 5               # max back-and-forth rounds
+  stability_rounds: 2         # stop after 2 consecutive agreements
+  model_timeout_seconds: 120  # per-model call timeout
+
+  # Panel: optional tiebreaker when reasoner and critic disagree
+  panel:
+    enabled: false
+    # model_ids: [cli:gemini]
+    # include_plan_models: false
+    # max_rounds: 1
+
+# Disable extras for simple setup
+annealing:
+  enabled: false
+
+diversity_check:
+  enabled: false

@@ -1288,12 +1288,13 @@ function summarizeEvent(event, run, index) {
       return `${roundLabel}: panel ${verdict || 'done'}${duration ? ` • ${duration}` : ''}${summary ? ` • ${summary}` : ''}`;
     }
     if (event.status === 'round_result') {
+      const smoke = event.agreement ? '\u2601\ufe0f white smoke' : '\u2587\u2587 black smoke';
       const verdict = event.agreement ? 'AGREE' : 'DISAGREE';
       const issues = disagreementCount ? ` • ${disagreementCount} issue${disagreementCount === 1 ? '' : 's'}` : '';
-      return `${roundLabel}: ${verdict}${issues}`;
+      return `${roundLabel}: ${smoke} ${verdict}${issues}`;
     }
     if (event.status === 'stable') {
-      return `${roundLabel}: stable disagreements detected`;
+      return `${roundLabel}: \u2587\u2587 black smoke — stable disagreement`;
     }
     if (event.status === 'stop') {
       return `${roundLabel}: stopping (${event.reason || 'done'})`;

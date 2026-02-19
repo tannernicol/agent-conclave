@@ -792,19 +792,23 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
                     agreement = event.get("agreement")
                     disagreements = event.get("disagreements") or []
                     verdict_text = "AGREE" if agreement else "DISAGREE"
+                    smoke = "\u2601\ufe0f white smoke" if agreement else "\u2587\u2587 black smoke"
                     extra = f"({len(disagreements)} issues)" if disagreements else ""
-                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, "result", verdict_text, extra] if part)
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, smoke, verdict_text, extra] if part)
                     print(line.strip(), file=sys.stderr)
                     continue
                 if status == "stable":
                     consecutive = event.get("consecutive")
-                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", "stable", f"({consecutive}x)" if consecutive else "", "-", "stopping"] if part)
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", "\u2587\u2587 black smoke", "stable disagreement", f"({consecutive}x)" if consecutive else ""] if part)
                     print(line.strip(), file=sys.stderr)
                     continue
                 if status == "stop":
                     reason = event.get("reason")
                     line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", "stop", f"reason={reason}" if reason else ""] if part)
                     print(line.strip(), file=sys.stderr)
+                    continue
+                if status == "done":
+                    print(f"{event.get('timestamp', '')} deliberate done".strip(), file=sys.stderr)
                     continue
             if role and model:
                 label = event.get("model_label") or model

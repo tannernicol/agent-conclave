@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="logo.svg" width="96" height="96" alt="Agent Conclave logo" />
+  <img src="logo.svg" width="96" height="96" alt="Agent Conclave logo — white smoke rising" />
   <h1>Agent Conclave</h1>
-  <p><strong>Multi-model consensus engine — local agents self-organize and iterate until an agreed best solution is reached</strong></p>
+  <p><strong>Get a second AI opinion without being human middleware</strong></p>
   <p>
     <a href="https://tannner.com">tannner.com</a> ·
     <a href="https://github.com/tannernicol/agent-conclave">GitHub</a>
@@ -18,21 +18,53 @@
 
 ## The Problem
 
-You're making a high-stakes decision — shipping a deploy, choosing an architecture, reviewing a security change. You ask Claude. Then you ask GPT. Then you ask Llama. You copy-paste between tabs, mentally diff the answers, and try to synthesize a verdict. Every time.
+You want multiple AI perspectives on an important decision. So you ask Claude. Then GPT. Then Gemini. You copy-paste between tabs, mentally diff the answers, and try to synthesize a verdict. You become human middleware between models that could be talking to each other directly.
 
 ## The Solution
 
-Conclave automates multi-model deliberation. Send one query, get structured consensus from N models that see each other's reasoning and iterate until they converge. Simulated annealing controls exploration vs. exploitation. Every decision produces a replayable audit trail.
+Conclave makes AI agents debate each other so you don't have to. A **Reasoner** builds the case, a **Critic** tears it apart, and they iterate until they converge — or agree to disagree. Like the papal conclave: white smoke when they agree, black smoke when they don't.
 
 **One query in, one verdict out. No more copy-paste consensus.**
 
+```
+$ conclave run --query "Should we use Redis or Postgres for session storage?" --progress
+
+13:04:11 calibration skipped
+13:04:15 route done  reasoner->codex  critic->claude  summarizer->claude
+13:04:15 deliberate round 1/5 start
+13:04:15 deliberate round 1/5 reasoner->codex thinking... (timeout 300s)
+13:04:52 deliberate round 1/5 reasoner->codex done (37s) — Redis wins on latency
+13:04:52 deliberate round 1/5 critic->claude thinking... (timeout 300s)
+13:05:28 deliberate round 1/5 ██ black smoke DISAGREE (3 issues)
+13:05:28 deliberate round 2/5 start
+13:05:28 deliberate round 2/5 reasoner->codex done (22s) — revised: Postgres for simplicity
+13:05:50 deliberate round 2/5 ☁️ white smoke AGREE
+13:05:50 deliberate done
+
+→ Consensus: Use Postgres — one fewer infrastructure dependency,
+  and your session volume doesn't justify Redis complexity.
+  Confidence: high
+```
+
+## How It Works
+
+1. **Route** — assigns roles based on model strengths (Reasoner, Critic, Summarizer)
+2. **Reason** — the Reasoner builds a detailed analysis
+3. **Critique** — the Critic challenges assumptions, finds flaws, and lists disagreements
+4. **Iterate** — the Reasoner revises based on critique; repeat until convergence
+5. **Smoke signal** — ☁️ white smoke on agreement, ██ black smoke on disagreement
+6. **Summarize** — a final structured verdict with confidence level and audit trail
+
+Fast-path: when all roles are pre-assigned, calibration and scoring are skipped entirely — deliberation starts in seconds.
+
 ## Key Features
 
-- **Model-agnostic adapters** for local, hosted, and self-hosted LLMs (Ollama, OpenAI, Anthropic)
-- **Multi-round deliberation** — models cross-validate each other's reasoning
-- **Configurable consensus strategies** with deterministic replay and simulated annealing
-- **Policy hooks and guardrails** for sensitive workflows
-- **Full audit trails** with replayable traces — every decision is reproducible
+- **Adversarial deliberation** — models argue FOR and AGAINST, not just answer in parallel
+- **Live progress** — see every round, every model thinking, every agree/disagree in real-time
+- **Model-agnostic** — works with any CLI-invocable model (Claude, Codex, Gemini, Ollama, etc.)
+- **Role overrides** — assign specific models to Reasoner/Critic/Summarizer roles
+- **Full audit trails** — every deliberation round persisted as replayable JSON
+- **Web dashboard** — view runs, events, and deliberation history in the browser
 
 ## Quick Start
 
@@ -43,28 +75,36 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
 # Edit config/example.yaml with your model endpoints
-# (defaults to two local Ollama models)
-
-python examples/demo.py --list          # see built-in demo questions
-python -m pytest tests/ -q              # run tests
+conclave health                    # verify models are reachable
+conclave run --query "test" --progress  # run a quick deliberation
+python -m pytest tests/ -q         # run tests
 ```
 
-```
-$ python examples/demo.py --list
-Available demo questions:
-  1. [creative]     What are the top 3 sci-fi films of all time and why?
-  2. [research]     If humanity could only bring one invention to Mars...
-  3. [code_review]  Functional vs OOP for large-scale systems?
-  4. [general]      Most impactful invention of the last 100 years?
-```
+## Configuration
 
-## How It Works
+```yaml
+# config/example.yaml — minimal setup with two local models
+models:
+  cards:
+    - id: cli:model-a
+      command: [ollama, run, llama3.2]
+      prompt_mode: arg
+    - id: cli:model-b
+      command: [ollama, run, qwen2.5:7b]
+      prompt_mode: arg
 
-1. **Fan-out** — sends the same prompt to N models in parallel
-2. **Score** — each response is scored against configurable rubrics
-3. **Iterate** — models see each other's responses and refine (simulated annealing controls exploration)
-4. **Converge** — stops when consensus threshold is met or max rounds reached
-5. **Audit** — full decision trace written to JSON for reproducibility
+# Assign roles — who reasons, who critiques
+planner:
+  role_overrides:
+    reasoner: cli:model-a
+    critic: cli:model-b
+    summarizer: cli:model-b
+
+deliberation:
+  max_rounds: 5
+  stability_rounds: 2         # stop after 2 consecutive agreements
+  model_timeout_seconds: 300
+```
 
 ## Agent Bus
 
@@ -90,13 +130,13 @@ Messages support priority levels, TTL expiration, recipient filtering, and auto-
 **In scope — what Conclave defends against:**
 
 - **Model disagreement masking** — a single model's hallucination or confident-but-wrong answer is surfaced by cross-validation from other models, not silently accepted
-- **Prompt drift across rounds** — simulated annealing and convergence thresholds prevent models from wandering off-topic during multi-round deliberation
+- **Prompt drift across rounds** — convergence thresholds prevent models from wandering off-topic during multi-round deliberation
 - **Audit gap** — every deliberation round, every chain of thought, and every vote is persisted as replayable JSON; decisions are never opaque
-- **Vendor lock-in** — model-agnostic design means no single provider failure degrades the system; swap Ollama, OpenAI, or Anthropic without code changes
+- **Vendor lock-in** — model-agnostic design means no single provider failure degrades the system; swap providers without code changes
 
 **Out of scope — what Conclave intentionally does not defend against:**
 
-- **Compromised model backends** — if an upstream API or local Ollama instance is serving poisoned weights, Conclave has no way to detect that; it trusts model outputs at face value
+- **Compromised model backends** — if an upstream API or local instance is serving poisoned weights, Conclave has no way to detect that; it trusts model outputs at face value
 - **Prompt injection in the query itself** — Conclave passes user queries to models without sanitization; adversarial prompts embedded in the input will reach all panelists
 - **Confidentiality of deliberation content** — queries and responses are sent to whichever model backends are configured, including cloud APIs; do not send secrets through cloud-routed panels
 - **Consensus correctness** — agreement among models does not guarantee factual accuracy; Conclave reduces variance, not ground-truth error
@@ -106,33 +146,29 @@ Messages support priority levels, TTL expiration, recipient filtering, and auto-
 ```mermaid
 flowchart TB
     User([User / CLI])
-    Config[config/local.yaml]
+    Config[config.yaml]
 
-    User -->|query| Orchestrator
-    Config -->|model endpoints\n+ rubrics| Orchestrator
+    User -->|query| Pipeline
+    Config -->|roles + models| Pipeline
 
     subgraph Conclave Engine
-        Orchestrator[Orchestrator]
-        Orchestrator -->|fan-out| M1[Model A\ne.g. Claude]
-        Orchestrator -->|fan-out| M2[Model B\ne.g. GPT]
-        Orchestrator -->|fan-out| M3[Model C\ne.g. Llama]
-        M1 -->|response| Scorer[Rubric Scorer]
-        M2 -->|response| Scorer
-        M3 -->|response| Scorer
-        Scorer -->|scored responses| Annealing[Simulated Annealing\nConvergence Check]
-        Annealing -->|iterate| Orchestrator
-        Annealing -->|converged| Verdict[Verdict]
+        Pipeline[Pipeline]
+        Pipeline -->|prompt| Reasoner[Reasoner\ne.g. Codex]
+        Reasoner -->|draft| Critic[Critic\ne.g. Claude]
+        Critic -->|feedback| Pipeline
+        Pipeline -->|revised prompt| Reasoner
+        Pipeline -->|converged| Summarizer[Summarizer]
     end
 
-    Verdict -->|JSON audit trail| AuditLog[(Audit Log)]
-    Verdict -->|result| Dashboard[Web Dashboard]
-    Verdict -->|result| User
+    Summarizer -->|verdict| User
+    Pipeline -->|audit trail| AuditLog[(Audit Log)]
+    Pipeline -->|events| Dashboard[Web Dashboard]
 ```
 
 ## Requirements
 
 - Python 3.10+
-- At least one LLM provider (Ollama for local, or OpenAI/Anthropic API keys)
+- At least one LLM accessible via CLI (Ollama for local, or Claude/Codex/Gemini CLIs)
 
 ## Author
 
