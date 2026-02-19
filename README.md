@@ -50,6 +50,13 @@ $ conclave run --query "Is a hot dog a sandwich?" --progress
   as a distinct culinary category in practice. Call it "hot dog"
   on menus, "sandwich" in taxonomies.
   Confidence: medium-high
+
+  Resolved: Codex's "function over geometry" argument was too
+  permissive (would include burritos). Revised to require
+  discrete bread, not wrapped dough.
+
+  Still split: Whether the exclusionary boundary is ad hoc.
+  Claude flags it works but could break on edge cases (pita?).
 ```
 
 ## How It Works
