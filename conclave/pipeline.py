@@ -1611,11 +1611,24 @@ class ConclavePipeline:
         def _summary_line(text: str, max_chars: int = 120) -> str:
             if not text:
                 return ""
+            import re
+            # Find first non-empty, non-heading line
             for line in text.splitlines():
                 stripped = line.strip()
-                if stripped:
-                    text = stripped
-                    break
+                if not stripped:
+                    continue
+                # Skip markdown headings
+                if stripped.startswith("#"):
+                    continue
+                # Skip lines that are only markdown formatting (bold headers, etc.)
+                plain = re.sub(r'[*_#`~>\-=|]', '', stripped).strip()
+                if not plain:
+                    continue
+                text = stripped
+                break
+            # Strip markdown bold/italic markers for cleaner display
+            text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+            text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
             text = text.strip()
             if len(text) <= max_chars:
                 return text
@@ -1693,6 +1706,7 @@ class ConclavePipeline:
                 "role": "reasoner",
                 "model_id": reasoner_model,
                 "model_label": self._model_label(reasoner_model) if reasoner_model else None,
+                "timeout_s": per_call_timeout,
             })
             reasoner_start = time.perf_counter()
             reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner", timeout_seconds=per_call_timeout)
@@ -1765,6 +1779,7 @@ class ConclavePipeline:
                         "role": "critic_panel",
                         "model_id": model_id,
                         "model_label": self._model_label(model_id),
+                        "timeout_s": effective_panel_timeout,
                     })
                     panel_start = time.perf_counter()
                     review = self._call_model(model_id, critic_prompt, role="critic_panel", timeout_seconds=effective_panel_timeout)
@@ -1871,6 +1886,7 @@ class ConclavePipeline:
                     "role": "critic",
                     "model_id": critic_model,
                     "model_label": self._model_label(critic_model) if critic_model else None,
+                    "timeout_s": per_call_timeout,
                 })
                 critic_start = time.perf_counter()
                 critic_out = self._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)

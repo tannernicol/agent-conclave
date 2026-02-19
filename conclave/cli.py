@@ -768,7 +768,9 @@ def _progress_printer(store: DecisionStore, run_id: str, stop_event: threading.E
                     print(line.strip(), file=sys.stderr)
                     continue
                 if status.endswith("_start") and label:
-                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, f"{role}->{label}" if role else label, "thinking..."] if part)
+                    timeout_s = event.get("timeout_s")
+                    timeout_text = f"(timeout {int(timeout_s)}s)" if isinstance(timeout_s, (int, float)) else ""
+                    line = " ".join(part for part in [event.get("timestamp", ""), "deliberate", round_text, f"{role}->{label}" if role else label, "thinking...", timeout_text] if part)
                     print(line.strip(), file=sys.stderr)
                     continue
                 if status.endswith("_done") and label:
