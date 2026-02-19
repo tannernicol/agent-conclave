@@ -518,7 +518,8 @@ class ConclavePipeline:
         if overrides is None:
             overrides = self.config.planner.get("role_overrides") if isinstance(self.config.planner, dict) else None
         override_keys = set((overrides or {}).keys())
-        if {"reasoner", "critic", "summarizer"}.issubset(override_keys):
+        required_roles = {"reasoner", "critic", "summarizer"}
+        if required_roles.issubset(override_keys):
             self.store.append_event(run_id, {
                 "phase": "calibration",
                 "status": "skipped",
@@ -666,7 +667,8 @@ class ConclavePipeline:
         if role_overrides:
             base_overrides.update({str(k): str(v) for k, v in role_overrides.items() if str(k) and str(v)})
         planner = self.planner.with_overrides(base_overrides) if base_overrides else self.planner
-        if {"reasoner", "critic", "summarizer"}.issubset(set(base_overrides or {})):
+        required_roles = {role for role in roles if role != "router"}
+        if required_roles and required_roles.issubset(set(base_overrides or {})):
             plan_with_rationale = {
                 "assignments": {role: model_id for role, model_id in (base_overrides or {}).items() if model_id},
                 "rationale": {"fast_path": True, "role_overrides": base_overrides},
