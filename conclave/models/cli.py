@@ -114,7 +114,12 @@ class CliClient:
 
         run_env = os.environ.copy()
         if env:
-            run_env.update({str(k): str(v) for k, v in env.items()})
+            for k, v in env.items():
+                sv = str(v)
+                if sv == "":
+                    run_env.pop(str(k), None)  # empty value = unset
+                else:
+                    run_env[str(k)] = sv
 
         start = time.perf_counter()
         try:

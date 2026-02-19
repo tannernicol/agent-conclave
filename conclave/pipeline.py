@@ -4089,7 +4089,7 @@ class ConclavePipeline:
             "path": str(path),
             "title": path.stem,
             "snippet": snippet_text,
-            "full_text": content[:5000],
+            "full_text": content[:20000],
             "collection": "user-input",
             "base_dir": str(path.parent),
         }]

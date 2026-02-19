@@ -140,7 +140,7 @@ class Planner:
             if override:
                 card = registry_map.get(override)
                 if card:
-                    allow_unhealthy = bool(card.get("fallback_model"))
+                    allow_unhealthy = True  # explicit overrides bypass health checks
                     ok, reason = self._check_requirements(
                         role,
                         card,
