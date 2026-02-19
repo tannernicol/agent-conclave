@@ -470,6 +470,10 @@ function setSmoke(active) {
   if (smokeStatusEl) smokeStatusEl.textContent = active ? 'Consensus reached.' : 'No consensus in progress.';
 }
 
+function hasAgreement(run) {
+  return run?.artifacts?.deliberation?.agreement === true;
+}
+
 function setRunAction(title, detail = '', type = 'info') {
   if (!runActionEl) return;
   if (runActionTimer) {
@@ -2385,7 +2389,7 @@ async function pollRun(runId) {
         if (data.type === 'state' || data.type === 'complete') {
           const run = data.run;
           if (run.status === 'complete') {
-            setSmoke(true);
+            setSmoke(hasAgreement(run));
             setStatus('Complete', 'success');
             renderLatest(run);
             refresh();
@@ -2441,7 +2445,7 @@ function startPolling(runId) {
 
       if (run.status === 'complete') {
         clearInterval(pollTimer);
-        setSmoke(true);
+        setSmoke(hasAgreement(run));
         setStatus('Complete', 'success');
         renderLatest(run);
         refresh();
