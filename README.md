@@ -33,15 +33,15 @@ $ conclave run --query "Is a hot dog a sandwich?" --progress
 14:08:14 route done  reasoner->codex  critic->claude  summarizer->claude
 14:08:15 deliberate round 1/5 start
 14:08:15 deliberate round 1/5 reasoner->codex thinking... (timeout 300s)
-14:08:47 deliberate round 1/5 reasoner->codex done (32s) — Yes, structurally a sandwich
+14:08:47 deliberate round 1/5 reasoner->codex done (32s) — Codex: yes, structurally a sandwich
 14:08:47 deliberate round 1/5 critic->claude thinking... (timeout 300s)
-14:09:21 deliberate round 1/5 critic->claude done (34s) — "function over geometry" is too permissive
+14:09:21 deliberate round 1/5 critic->claude done (34s) — Claude: "function over geometry" is too permissive
 14:09:21 deliberate round 1 ██ black smoke DISAGREE (3 issues)
 14:09:21 deliberate round 2/5 start
 14:09:21 deliberate round 2/5 reasoner->codex thinking... (timeout 300s)
-14:09:48 deliberate round 2/5 reasoner->codex done (27s) — revised: sandwich with exclusionary boundary
+14:09:48 deliberate round 2/5 reasoner->codex done (27s) — Codex: revised with exclusionary boundary
 14:09:48 deliberate round 2/5 critic->claude thinking... (timeout 300s)
-14:10:19 deliberate round 2/5 critic->claude done (31s) — AGREE with caveats
+14:10:19 deliberate round 2/5 critic->claude done (31s) — Claude: AGREE with caveats
 14:10:19 deliberate round 2 ☁️ white smoke AGREE
 14:10:19 deliberate done
 
