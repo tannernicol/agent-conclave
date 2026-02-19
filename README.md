@@ -12,10 +12,6 @@
 
 ---
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/tannernicol/agent-conclave/main/docs/demo.gif" alt="Conclave demo" width="700" />
-</p>
-
 ## The Problem
 
 You want multiple AI perspectives on an important decision. So you ask Claude. Then GPT. Then Gemini. You copy-paste between tabs, mentally diff the answers, and try to synthesize a verdict. You become human middleware between models that could be talking to each other directly.
