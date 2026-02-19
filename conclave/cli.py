@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import signal
+import os
 import sys
 import threading
 import time
@@ -67,6 +67,7 @@ def _execute_run(
     store = pipeline.store
     run_id = store.create_run(query, meta=meta if meta else None)
     stop_event = threading.Event()
+    timeout_thread = None
     progress_thread = None
     if getattr(args, "progress", False):
         progress_thread = threading.Thread(
@@ -77,12 +78,19 @@ def _execute_run(
         progress_thread.start()
         print(f"[conclave] run_id={run_id}", file=sys.stderr)
 
-    def _timeout_handler(signum, frame):
-        raise TimeoutError(f"run exceeded max_seconds={args.max_seconds}")
-
     if getattr(args, "max_seconds", None):
-        signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(int(args.max_seconds))
+        timeout_seconds = int(args.max_seconds)
+        def _timeout_guard() -> None:
+            if stop_event.wait(timeout_seconds):
+                return
+            try:
+                store.fail_run(run_id, f"run exceeded max_seconds={timeout_seconds}")
+            except Exception:
+                pass
+            print(f"[conclave] run aborted: exceeded max_seconds={timeout_seconds}", file=sys.stderr)
+            os._exit(2)
+        timeout_thread = threading.Thread(target=_timeout_guard, daemon=True)
+        timeout_thread.start()
 
     try:
         result = pipeline.run(query, collections=collections, meta=meta, run_id=run_id)
@@ -99,11 +107,11 @@ def _execute_run(
         }
         result = PipelineResult(run_id=run_id, consensus=consensus, artifacts={})
     finally:
-        if getattr(args, "max_seconds", None):
-            signal.alarm(0)
         stop_event.set()
         if progress_thread:
             progress_thread.join(timeout=1.0)
+        if timeout_thread:
+            timeout_thread.join(timeout=1.0)
     return result
 
 
