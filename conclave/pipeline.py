@@ -170,6 +170,7 @@ class ConclavePipeline:
         audit = AuditLog(self.store.run_dir(run_id) / "audit.jsonl")
         self._audit = audit
         self._run_id = run_id
+        self._run_meta = meta or {}
         self._run_start_time = time.time()
         self._run_models_used = set()
         self._context_char_limit = None
@@ -2058,7 +2059,9 @@ class ConclavePipeline:
         role_overrides: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         cfg = self.config.raw.get("annealing", {}) or {}
-        if not cfg.get("enabled", False):
+        # Anneal only when explicitly requested via --anneal flag or config enabled
+        anneal_requested = bool(getattr(self, "_run_meta", {}).get("anneal"))
+        if not anneal_requested and not cfg.get("enabled", False):
             deliberation = self._deliberate(query, context, route)
             return {
                 "deliberation": deliberation,
