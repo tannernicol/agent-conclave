@@ -27,23 +27,23 @@ Conclave makes AI agents debate each other so you don't have to. A **Reasoner** 
 **One query in, one verdict out. No more copy-paste consensus.**
 
 ```
-$ conclave run --query "Should we use Redis or Postgres for session storage?" --progress
+$ conclave run --query "Is a hot dog a sandwich?" --progress
 
-13:04:11 calibration skipped
-13:04:15 route done  reasoner->codex  critic->claude  summarizer->claude
-13:04:15 deliberate round 1/5 start
-13:04:15 deliberate round 1/5 reasoner->codex thinking... (timeout 300s)
-13:04:52 deliberate round 1/5 reasoner->codex done (37s) — Redis wins on latency
-13:04:52 deliberate round 1/5 critic->claude thinking... (timeout 300s)
-13:05:28 deliberate round 1/5 ██ black smoke DISAGREE (3 issues)
-13:05:28 deliberate round 2/5 start
-13:05:28 deliberate round 2/5 reasoner->codex done (22s) — revised: Postgres for simplicity
-13:05:50 deliberate round 2/5 ☁️ white smoke AGREE
-13:05:50 deliberate done
+14:08:07 calibration skipped
+14:08:14 route done  reasoner->codex  critic->claude  summarizer->claude
+14:08:15 deliberate round 1/5 start
+14:08:15 deliberate round 1/5 reasoner->codex thinking... (timeout 300s)
+14:08:47 deliberate round 1/5 reasoner->codex done (32s) — Yes, structurally a sandwich
+14:08:47 deliberate round 1/5 critic->claude thinking... (timeout 300s)
+14:09:21 deliberate round 1/5 critic->claude done (34s) — AGREE (3 issues)
+14:09:21 deliberate round 1 ☁️ white smoke AGREE
+14:09:21 deliberate done
 
-→ Consensus: Use Postgres — one fewer infrastructure dependency,
-  and your session volume doesn't justify Redis complexity.
-  Confidence: high
+→ Consensus: A hot dog is structurally a sandwich — filling
+  placed within discrete bread, eaten by hand. But it operates
+  as a distinct culinary category in practice. Call it "hot dog"
+  on menus, "sandwich" in taxonomies.
+  Confidence: medium-high
 ```
 
 ## How It Works
