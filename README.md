@@ -13,7 +13,7 @@
 ---
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Conclave demo" width="700" />
+  <img src="https://raw.githubusercontent.com/tannernicol/agent-conclave/main/docs/demo.gif" alt="Conclave demo" width="700" />
 </p>
 
 ## The Problem
