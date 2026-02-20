@@ -1,33 +1,34 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap');
 
 :root {
   color-scheme: dark;
   --ui-font-sans: 'Space Grotesk', 'Plus Jakarta Sans', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  --ui-font-serif: 'Fraunces', 'Iowan Old Style', 'Times New Roman', serif;
   --ui-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'SFMono-Regular', monospace;
-  --ui-bg: #090d12;
-  --ui-bg-accent: #101824;
-  --ui-surface: #151c26;
-  --ui-surface-2: #1c2533;
-  --ui-surface-3: #263447;
-  --ui-border: #344255;
-  --ui-text: #e6edf5;
-  --ui-muted: #b0bbc9;
-  --ui-muted-2: #7f8a9a;
-  --ui-accent: #2dd4bf;
-  --ui-accent-strong: #14b8a6;
-  --ui-accent-soft: #0b3b36;
-  --ui-highlight: #f5b26b;
-  --ui-focus: rgba(45, 212, 191, 0.35);
-  --ui-success: #2fbf71;
-  --ui-warning: #e6b566;
-  --ui-danger: #f0727c;
-  --ui-info: #74a7ff;
-  --ui-shadow: 0 24px 50px rgba(2, 6, 12, 0.55), 0 8px 18px rgba(2, 6, 12, 0.35);
-  --ui-shadow-soft: 0 12px 26px rgba(2, 6, 12, 0.4), 0 4px 10px rgba(2, 6, 12, 0.28);
-  --ui-radius: 14px;
-  --ui-border-soft: rgba(52, 66, 85, 0.6);
-  --ui-glass: rgba(15, 22, 32, 0.7);
-  --ui-glow: 0 0 0 1px rgba(45, 212, 191, 0.15), 0 0 25px rgba(45, 212, 191, 0.2);
+  --ui-bg: #0b1116;
+  --ui-bg-accent: #0f1720;
+  --ui-surface: #111a23;
+  --ui-surface-2: #151f2a;
+  --ui-surface-3: #1b2633;
+  --ui-border: #2b3a4b;
+  --ui-text: #e9eef6;
+  --ui-muted: #c1cbd9;
+  --ui-muted-2: #96a6bb;
+  --ui-accent: #5cc8d7;
+  --ui-accent-strong: #3fb7c8;
+  --ui-accent-soft: #12323b;
+  --ui-highlight: #f0b36a;
+  --ui-focus: rgba(92, 200, 215, 0.35);
+  --ui-success: #38c27a;
+  --ui-warning: #f0b36a;
+  --ui-danger: #f07b75;
+  --ui-info: #7da2ff;
+  --ui-shadow: 0 28px 54px rgba(3, 8, 15, 0.6), 0 12px 24px rgba(3, 8, 15, 0.4);
+  --ui-shadow-soft: 0 12px 26px rgba(3, 8, 15, 0.45), 0 6px 12px rgba(3, 8, 15, 0.3);
+  --ui-radius: 18px;
+  --ui-border-soft: rgba(43, 58, 75, 0.6);
+  --ui-glass: rgba(17, 26, 35, 0.75);
+  --ui-glow: 0 0 0 1px rgba(92, 200, 215, 0.18), 0 0 25px rgba(92, 200, 215, 0.22);
 
   --bg: var(--ui-bg);
   --bg-2: var(--ui-bg-accent);
@@ -70,13 +71,13 @@ body {
 body {
   margin: 0;
   font-family: var(--ui-font-sans);
-  line-height: 1.6;
+  line-height: 1.65;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   background:
-    radial-gradient(1100px circle at 10% 8%, rgba(45, 212, 191, 0.14), transparent 60%),
-    radial-gradient(900px circle at 88% 12%, rgba(245, 178, 107, 0.12), transparent 60%),
-    linear-gradient(160deg, #090d12 0%, #0c131c 55%, #080c11 100%);
+    radial-gradient(1100px circle at 12% 10%, rgba(92, 200, 215, 0.16), transparent 60%),
+    radial-gradient(900px circle at 88% 14%, rgba(240, 179, 106, 0.12), transparent 60%),
+    linear-gradient(165deg, #0b1116 0%, #0f1720 60%, #0b1116 100%);
   color: var(--ui-text);
 }
 

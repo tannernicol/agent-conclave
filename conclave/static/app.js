@@ -10,6 +10,9 @@ const latestEvidenceEl = document.getElementById('latest-evidence');
 const latestArtifactsEl = document.getElementById('latest-artifacts');
 const viewLatestContextBtn = document.getElementById('view-latest-context');
 const latestTitleEl = document.getElementById('latest-title');
+const latestQuestionEl = document.getElementById('latest-question');
+const latestQuestionEditorEl = document.getElementById('latest-question-editor');
+const useLatestQuestionBtn = document.getElementById('use-latest-question');
 const clearSelectionBtn = document.getElementById('clear-selection');
 const progressEl = document.getElementById('pipeline-progress');
 const liveProgressEl = document.getElementById('live-progress');
@@ -450,13 +453,6 @@ function formatDuration(ms) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${seconds}s`;
-}
-
-function formatTimeShort(value) {
-  if (!value) return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 // Status management
@@ -1655,6 +1651,8 @@ function renderLatest(latest) {
       latestArtifactsEl.innerHTML = '';
       latestArtifactsEl.classList.add('hidden');
     }
+    if (latestQuestionEl) latestQuestionEl.classList.add('hidden');
+    if (latestQuestionEditorEl) latestQuestionEditorEl.value = '';
     renderLiveProgress(null);
     renderReconcilePanel(null);
     if (latestTitleEl) latestTitleEl.textContent = 'Latest Decision';
@@ -1674,9 +1672,10 @@ function renderLatest(latest) {
     latestTimeEl.textContent = `Started ${formatTime(startedAt)} • Elapsed ${elapsed}`;
   } else if (startedAt && endedAt && !Number.isNaN(startedMs) && !Number.isNaN(endedMs)) {
     const duration = formatDuration(endedMs - startedMs);
-    latestTimeEl.textContent = `${formatTime(endedAt)} • Duration ${duration}`;
+    latestTimeEl.textContent = `Last run ${formatTime(endedAt)} • Duration ${duration}`;
   } else {
-    latestTimeEl.textContent = formatTime(latest.completed_at || latest.created_at);
+    const stamp = latest.completed_at || latest.created_at;
+    latestTimeEl.textContent = stamp ? `Last run ${formatTime(stamp)}` : '—';
   }
   renderLiveProgress(latest);
   renderReconcilePanel(latest).catch(console.error);
@@ -1689,6 +1688,12 @@ function renderLatest(latest) {
     const costValue = latest?.artifacts?.cost_estimate?.total_usd;
     const costHtml = costValue !== undefined ? `<span class="latest-cost">Est. ${formatCost(costValue)}</span>` : '';
     latestPromptEl.innerHTML = `${escapeHtml(promptText)} ${outputHtml} ${costHtml}`.trim();
+  }
+
+  if (latestQuestionEl && latestQuestionEditorEl) {
+    const question = latest.query || '';
+    latestQuestionEditorEl.value = question;
+    latestQuestionEl.classList.toggle('hidden', !question);
   }
 
   // Render models used
@@ -1898,6 +1903,19 @@ function renderLatest(latest) {
   renderProgress(latest);
 }
 
+if (useLatestQuestionBtn && latestQuestionEditorEl) {
+  useLatestQuestionBtn.addEventListener('click', () => {
+    const text = latestQuestionEditorEl.value.trim();
+    if (!text) return;
+    const queryField = document.getElementById('query');
+    if (queryField) {
+      queryField.value = text;
+      queryField.focus();
+      queryField.setSelectionRange(text.length, text.length);
+    }
+  });
+}
+
 // Render Run History as cards
 function renderRuns(runs) {
   if (!runListEl) return;
@@ -1961,7 +1979,6 @@ function renderRuns(runs) {
     const selectedClass = selectedRun?.id === run.id ? ' is-selected' : '';
     return `
       <div class="run-card ${cardClass}${selectedClass}" data-run-id="${escapeHtml(run.id || '')}" data-run-title="${escapeHtml(title)}" data-run-query="${escapeHtml(run.query || '')}" data-run-output="${escapeHtml(outputType)}">
-        <button class="card-delete" data-run-id="${escapeHtml(run.id || '')}" aria-label="Delete run">×</button>
         <div class="run-card-main">
           <div class="run-card-title">
             ${escapeHtml(title.slice(0, 60))}${title.length > 60 ? '...' : ''}
@@ -1986,6 +2003,7 @@ function renderRuns(runs) {
             <button class="ui-button ghost small view-context" data-run-id="${escapeHtml(run.id || '')}">Context</button>
             <button class="ui-button ghost small edit-run" data-run-id="${escapeHtml(run.id || '')}">Edit</button>
             <button class="ui-button ghost small rerun-run" data-run-id="${escapeHtml(run.id || '')}">Rerun</button>
+            <button class="ui-button ghost small card-delete" data-run-id="${escapeHtml(run.id || '')}" aria-label="Delete run">Delete</button>
           </div>
         </div>
       </div>
@@ -3018,6 +3036,14 @@ async function routeFromHash() {
     try {
       await loadPrompt(promptId, { pushHash: false });
       setHistoryTab('saved');
+      // Also load the most recent run for this prompt
+      const runsResp = await fetchJSON('/api/runs');
+      const runs = runsResp?.runs || [];
+      const matchingRun = runs.find((r) => r?.meta?.prompt_id === promptId);
+      if (matchingRun?.id) {
+        const fullRun = await fetchJSON(`/api/runs/${matchingRun.id}`);
+        if (fullRun?.id) setSelectedRun(fullRun, { pushHash: false });
+      }
     } catch (err) {
       console.warn('Could not load prompt from URL:', promptId, err);
     }
