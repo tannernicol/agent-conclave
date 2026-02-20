@@ -388,14 +388,20 @@ function maybeAutoFailRun(run) {
   }).catch(console.error);
 }
 
-function setSelectedRun(run) {
+function setSelectedRun(run, { pushHash = true } = {}) {
   selectedRun = run || null;
   renderLatest(run);
+  if (pushHash && run?.id) {
+    history.replaceState(null, '', `#/runs/${run.id}`);
+  }
   refresh();
 }
 
 function clearSelectedRun() {
   selectedRun = null;
+  if (location.hash.startsWith('#/runs/')) {
+    history.replaceState(null, '', location.pathname);
+  }
   refresh();
 }
 
@@ -1166,7 +1172,10 @@ function buildPhaseState(run) {
   events.forEach((event) => {
     if (event.phase === 'route' && event.status === 'done') done.add('route');
     if (event.phase === 'retrieve' && event.status === 'done') done.add('retrieve');
-    if (event.phase === 'model' && event.role) done.add(event.role);
+    if (event.phase === 'model' && event.role) {
+      const roleKey = event.role === 'critic_panel' ? 'critic' : event.role;
+      done.add(roleKey);
+    }
   });
 
   if (run.status === 'complete') {
@@ -1341,8 +1350,9 @@ function renderLiveProgress(run) {
     const globalIndex = offset + idx;
     const timestamp = event.timestamp ? formatTimeShort(event.timestamp) : '';
     const summary = summarizeEvent(event, run, globalIndex);
+    const isLatest = idx === recent.length - 1;
     return `
-      <div class="live-event">
+      <div class="live-event ${isLatest ? 'latest' : ''}">
         <span class="live-event-time">${escapeHtml(timestamp)}</span>
         <span class="live-event-detail">${escapeHtml(summary || 'Update received')}</span>
       </div>
@@ -2508,7 +2518,7 @@ async function savePrompt() {
   refresh();
 }
 
-async function loadPrompt(promptId) {
+async function loadPrompt(promptId, { pushHash = true } = {}) {
   const prompt = await fetchJSON(`/api/prompts/${promptId}`);
   document.getElementById('query').value = prompt.query || '';
   document.getElementById('input-title').value = prompt.title || '';
@@ -2520,6 +2530,9 @@ async function loadPrompt(promptId) {
   setRoleOverrides(prompt.role_overrides || {});
   if (fileInputEl) fileInputEl.value = '';
   currentPromptId = prompt.id;
+  if (pushHash) {
+    history.replaceState(null, '', `#/prompts/${promptId}`);
+  }
   setPromptStatus('Loaded');
   updatePromptButton();
 }
@@ -2981,7 +2994,40 @@ if (reconcilePanelEl) {
   });
 }
 
+// --- Hash-based URL routing ---
+async function routeFromHash() {
+  const hash = location.hash;
+  if (!hash) return;
+  const runMatch = hash.match(/^#\/runs\/(.+)$/);
+  if (runMatch) {
+    const runId = decodeURIComponent(runMatch[1]);
+    try {
+      const run = await fetchJSON(`/api/runs/${runId}`);
+      if (run?.id) {
+        setSelectedRun(run, { pushHash: false });
+        setHistoryTab('runs');
+      }
+    } catch (err) {
+      console.warn('Could not load run from URL:', runId, err);
+    }
+    return;
+  }
+  const promptMatch = hash.match(/^#\/prompts\/(.+)$/);
+  if (promptMatch) {
+    const promptId = decodeURIComponent(promptMatch[1]);
+    try {
+      await loadPrompt(promptId, { pushHash: false });
+      setHistoryTab('saved');
+    } catch (err) {
+      console.warn('Could not load prompt from URL:', promptId, err);
+    }
+  }
+}
+
+window.addEventListener('hashchange', () => routeFromHash());
+
 // Initialize
 refresh();
 updatePromptButton();
 renderArtifactList(parseArtifactPaths());
+routeFromHash();
