@@ -64,6 +64,7 @@ let agentSetsLoaded = false;
 let runActionTimer = null;
 let runListTimer = null;
 let runWebSocket = null;
+let liveProgressTimer = null;
 let activeContextRun = null;
 let latestRunCache = null;
 let selectedRun = null;
@@ -1230,6 +1231,7 @@ function summarizeEvent(event, run, index) {
     const label = event.model_label || event.model_id || 'model';
     const duration = event.duration_ms ? `${Math.round(event.duration_ms / 100) / 10}s` : '';
     const status = event.ok === false ? 'error' : (event.ok === true ? 'ok' : '');
+    const error = event.error || (event.ok === false ? 'failed' : '');
 
     let description = `${role}: ${label}`;
     if (role === 'reasoner') {
@@ -1246,25 +1248,45 @@ function summarizeEvent(event, run, index) {
       description = `Summarizer distilling consensus`;
     }
 
-    return `${description}${duration ? ` • ${duration}` : ''}${status ? ` • ${status}` : ''}`.trim();
+    const statusLabel = status ? ` • ${status}` : '';
+    const errorLabel = status === 'error' && error ? ` • ${error}` : '';
+    return `${description}${duration ? ` • ${duration}` : ''}${statusLabel}${errorLabel}`.trim();
   }
   if (phase === 'retrieve') {
     const evidence = event.context?.evidence;
     const ragCount = event.context?.rag;
+    const fileCount = event.context?.file_index;
     const details = [];
     if (typeof evidence === 'number') details.push(`evidence ${evidence}`);
     if (typeof ragCount === 'number') details.push(`rag ${ragCount}`);
+    if (typeof fileCount === 'number') details.push(`files ${fileCount}`);
     return `Retrieval completed${details.length ? ` • ${details.join(', ')}` : ''}`.trim();
   }
   if (phase === 'route') {
-    return event.status === 'done' ? 'Routing complete' : 'Routing models';
+    if (event.status === 'done') {
+      const plan = event.models || (event.route && event.route.plan_details) || {};
+      const roles = [];
+      const pick = (key, label) => {
+        const info = plan?.[key];
+        if (info && (info.label || info.id || info)) {
+          roles.push(`${label}:${info.label || info.id || info}`);
+        }
+      };
+      pick('reasoner', 'reasoner');
+      pick('critic', 'critic');
+      pick('summarizer', 'summarizer');
+      return `Routing complete${roles.length ? ` • ${roles.join(', ')}` : ''}`;
+    }
+    return 'Routing models';
   }
   if (phase === 'quality') {
     const count = event.evidence_count;
     const signal = event.max_signal_score;
+    const issues = event.issues;
     const details = [];
     if (typeof count === 'number') details.push(`evidence ${count}`);
     if (typeof signal === 'number') details.push(`signal ${signal.toFixed(2)}`);
+    if (Array.isArray(issues) && issues.length) details.push(`${issues.length} issue${issues.length === 1 ? '' : 's'}`);
     return `Quality check${details.length ? ` • ${details.join(', ')}` : ''}`.trim();
   }
   if (phase === 'deliberate') {
@@ -1300,7 +1322,8 @@ function summarizeEvent(event, run, index) {
       const smoke = event.agreement ? '\u2601\ufe0f white smoke' : '\u2587\u2587 black smoke';
       const verdict = event.agreement ? 'AGREE' : 'DISAGREE';
       const issues = disagreementCount ? ` • ${disagreementCount} issue${disagreementCount === 1 ? '' : 's'}` : '';
-      return `${roundLabel}: ${smoke} ${verdict}${issues}`;
+      const ratio = typeof event.weighted_ratio === 'number' ? ` • ratio ${(event.weighted_ratio * 100).toFixed(0)}%` : '';
+      return `${roundLabel}: ${smoke} ${verdict}${issues}${ratio}`;
     }
     if (event.status === 'stable') {
       return `${roundLabel}: \u2587\u2587 black smoke — stable disagreement`;
@@ -1332,6 +1355,7 @@ function renderLiveProgress(run) {
   if (!liveProgressEl) return;
   if (!run || run.status !== 'running') {
     liveProgressEl.classList.add('hidden');
+    liveProgressEl.classList.remove('stale');
     liveProgressEl.innerHTML = '';
     return;
   }
@@ -1342,14 +1366,20 @@ function renderLiveProgress(run) {
   const allEvents = run.events || [];
   const recent = allEvents.slice(-6);
   const offset = allEvents.length - recent.length;
+  const lastEvent = allEvents.length ? allEvents[allEvents.length - 1] : null;
+  const lastEventTs = lastEvent?.timestamp ? Date.parse(lastEvent.timestamp) : NaN;
+  const lastEventAge = Number.isNaN(lastEventTs) ? null : Math.max(0, Date.now() - lastEventTs);
+  const lastEventLabel = lastEventAge === null ? '—' : formatDuration(lastEventAge);
   const events = recent.map((event, idx) => {
     const globalIndex = offset + idx;
     const timestamp = event.timestamp ? formatTimeShort(event.timestamp) : '';
     const summary = summarizeEvent(event, run, globalIndex);
+    const tag = event.phase ? `${event.phase}${event.role ? ':' + event.role : ''}` : '';
     const isLatest = idx === recent.length - 1;
     return `
       <div class="live-event ${isLatest ? 'latest' : ''}">
         <span class="live-event-time">${escapeHtml(timestamp)}</span>
+        ${tag ? `<span class="live-event-tag">${escapeHtml(tag)}</span>` : ''}
         <span class="live-event-detail">${escapeHtml(summary || 'Update received')}</span>
       </div>
     `;
@@ -1362,6 +1392,7 @@ function renderLiveProgress(run) {
         <span>Phase: ${escapeHtml(active?.label || 'Queued')}</span>
         <span>Elapsed: ${formatDuration(timing.elapsedMs)}</span>
         <span>ETA: ${timing.etaMs === null ? '—' : formatDuration(timing.etaMs)}</span>
+        <span>Last update: ${lastEventLabel}</span>
         <span>Progress: ${percent}%</span>
       </div>
     </div>
@@ -1373,6 +1404,11 @@ function renderLiveProgress(run) {
     </div>
   `;
   liveProgressEl.classList.remove('hidden');
+  if (lastEventAge !== null && lastEventAge > 20000) {
+    liveProgressEl.classList.add('stale');
+  } else {
+    liveProgressEl.classList.remove('stale');
+  }
 }
 
 function renderRunProgress(run) {
@@ -1658,6 +1694,10 @@ function renderLatest(latest) {
     if (latestTitleEl) latestTitleEl.textContent = 'Latest Decision';
     if (clearSelectionBtn) clearSelectionBtn.classList.add('hidden');
     renderProgress(null);
+    if (liveProgressTimer) {
+      clearInterval(liveProgressTimer);
+      liveProgressTimer = null;
+    }
     return;
   }
 
@@ -1679,6 +1719,27 @@ function renderLatest(latest) {
   }
   renderLiveProgress(latest);
   renderReconcilePanel(latest).catch(console.error);
+  if (latest.status === 'running') {
+    if (!liveProgressTimer) {
+      liveProgressTimer = setInterval(() => {
+        if (!latestRunCache || latestRunCache.status !== 'running') {
+          clearInterval(liveProgressTimer);
+          liveProgressTimer = null;
+          return;
+        }
+        const run = latestRunCache;
+        const started = run.created_at || run.started_at || '';
+        const startedMsTick = Date.parse(started);
+        if (started && !Number.isNaN(startedMsTick)) {
+          latestTimeEl.textContent = `Started ${formatTime(started)} • Elapsed ${formatDuration(Date.now() - startedMsTick)}`;
+        }
+        renderLiveProgress(run);
+      }, 1000);
+    }
+  } else if (liveProgressTimer) {
+    clearInterval(liveProgressTimer);
+    liveProgressTimer = null;
+  }
 
   if (latestPromptEl) {
     const prompt = latest.query || '';
@@ -1960,11 +2021,13 @@ function renderRuns(runs) {
     const outputChip = outputType ? `<span class="status-chip output">Output: ${escapeHtml(outputType)}</span>` : '';
 
     let outputHtml = '';
-    if (run.consensus?.answer) {
+    if (status === 'failed') {
+      const errMsg = run.error || 'Pipeline failed';
+      outputHtml = `<div class="run-card-output error">${escapeHtml(errMsg)}</div>`;
+    } else if (run.consensus?.answer) {
       if (isInsufficient) {
         outputHtml = `<div class="run-card-output error">Insufficient evidence to provide confident answer</div>`;
       } else {
-        // Show the actual answer content (first 500 chars or key bullets)
         outputHtml = `<div class="run-card-answer">${renderAnswerPreview(run.consensus.answer)}</div>`;
       }
     } else if (run.error) {
@@ -1998,7 +2061,7 @@ function renderRuns(runs) {
           </details>
         </div>
         <div class="run-card-side">
-          <div class="run-card-time">${formatTime(run.completed_at || run.created_at)}</div>
+          <div class="run-card-time">${status === 'running' ? `Started ${formatTime(run.created_at || run.started_at)}` : `Last run ${formatTime(run.completed_at || run.created_at)}`}</div>
           <div class="run-card-actions">
             <button class="ui-button ghost small view-context" data-run-id="${escapeHtml(run.id || '')}">Context</button>
             <button class="ui-button ghost small edit-run" data-run-id="${escapeHtml(run.id || '')}">Edit</button>
@@ -2134,7 +2197,7 @@ function renderPromptList(prompts) {
     else if (latestAgreement === false) latestLabel = 'Consensus not reached';
     else if (latestStatus) latestLabel = latestStatus;
     const latestMeta = latestTime ? `Last run ${formatTime(latestTime)}${latestLabel ? ' • ' + latestLabel : ''}` : 'No runs yet';
-    const latestPreview = latestAnswer ? renderAnswerPreview(latestAnswer) : '';
+    const latestPreview = (latestStatus !== 'failed' && latestAnswer) ? renderAnswerPreview(latestAnswer) : '';
     const latestError = latest?.error || '';
     const statusChip = latestStatus ? `<span class="status-chip ${escapeHtml(latestStatus)}">${escapeHtml(latestStatus)}</span>` : '';
     const consensusChip = latestAgreement === true
@@ -2143,7 +2206,6 @@ function renderPromptList(prompts) {
     const selectedClass = latest?.id && selectedRun?.id === latest.id ? ' is-selected' : '';
     return `
       <div class="prompt-card${selectedClass}" data-prompt-id="${escapeHtml(prompt.id)}" data-run-id="${escapeHtml(latest?.id || '')}">
-        <button class="card-delete" data-action="delete" data-id="${prompt.id}" aria-label="Delete saved query">×</button>
         <div class="prompt-card-header">
           <div class="prompt-card-title">${escapeHtml(title)}</div>
           <div class="prompt-card-chips">
@@ -2160,6 +2222,7 @@ function renderPromptList(prompts) {
           <button class="ui-button small" data-action="load" data-id="${prompt.id}">Edit</button>
           <button class="ui-button small primary" data-action="run" data-id="${prompt.id}">Run</button>
           ${latest?.id ? `<button class="ui-button ghost small" data-action="view" data-run-id="${latest.id}">Open</button>` : ''}
+          <button class="ui-button ghost small card-delete" data-action="delete" data-id="${prompt.id}" aria-label="Delete saved query">Delete</button>
         </div>
       </div>
     `;
@@ -2913,7 +2976,7 @@ if (promptListEl) {
       refresh();
     }
 
-    if (cardRunId && !e.target.closest('button')) {
+    if (cardRunId && !e.target.closest('button') && !e.target.closest('details') && !e.target.closest('summary')) {
       const run = await fetchJSON(`/api/runs/${cardRunId}`);
       setSelectedRun(run);
       await loadRunForEdit(run);
