@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from conclave.config import get_config
+from conclave.config import get_config, validate_config
 from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.pipeline import ConclavePipeline, PipelineResult
@@ -478,10 +478,16 @@ def _notify_validation_failure(config: Any, payload: dict) -> None:
 
 def cmd_validate(args: argparse.Namespace) -> None:
     config = get_config()
-    run_routing = bool(args.routing) or not (args.routing or args.health)
-    run_health = bool(args.health) or not (args.routing or args.health)
+    run_config = bool(args.config) or not (args.routing or args.health or args.config)
+    run_routing = bool(args.routing) or not (args.routing or args.health or args.config)
+    run_health = bool(args.health) or not (args.routing or args.health or args.config)
     results = {}
     failed = False
+    if run_config:
+        config_payload = validate_config(config)
+        results["config"] = config_payload
+        if not config_payload.get("ok", False):
+            failed = True
     if run_health:
         try:
             health_payload = _health_payload(config)
@@ -721,13 +727,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--no-fetch", action="store_true")
     audit.add_argument("--fail-on-issues", action="store_true")
 
-    health = sub.add_parser("health")
+    sub.add_parser("health")
 
     validate = sub.add_parser("validate")
     validate.add_argument("--routing", action="store_true")
     validate.add_argument("--health", action="store_true")
+    validate.add_argument("--config", action="store_true")
 
-    validate_routing = sub.add_parser("validate-routing")
+    sub.add_parser("validate-routing")
 
     eval_cmd = sub.add_parser("eval")
     eval_cmd.add_argument("--case-id", action="append")

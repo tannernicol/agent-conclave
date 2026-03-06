@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, BackgroundTasks, Request, WebSocket, WebSocketDisconnect, UploadFile, File
+from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,10 +17,26 @@ import time
 
 from conclave.config import get_config
 from conclave.pipeline import ConclavePipeline
-from conclave.store import DecisionStore
 from conclave.models.registry import ModelRegistry
 
-app = FastAPI(title="Conclave")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    config = get_config()
+    app.state.config = config
+    app.state.pipeline = ConclavePipeline(config)
+    app.state.store = app.state.pipeline.store
+    app.state.registry = ModelRegistry.from_config(config.models)
+    try:
+        yield
+    finally:
+        pipeline = getattr(app.state, "pipeline", None)
+        if pipeline:
+            try:
+                pipeline.mcp.close_all()
+            except Exception:
+                pass
+
+app = FastAPI(title="Conclave", lifespan=lifespan)
 
 # WebSocket connection manager for real-time updates
 class ConnectionManager:
@@ -372,18 +389,9 @@ def _write_prompt_input(
     path.write_text("\n".join(body).strip() + "\n")
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    config = get_config()
-    app.state.config = config
-    app.state.pipeline = ConclavePipeline(config)
-    app.state.store = DecisionStore(config.data_dir)
-    app.state.registry = ModelRegistry.from_config(config.models)
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return TEMPLATES.TemplateResponse("index.html", {"request": request})
+    return TEMPLATES.TemplateResponse(request, "index.html")
 
 
 @app.get("/health")

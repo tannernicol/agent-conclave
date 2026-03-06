@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 import fnmatch
 import mimetypes
 import os
@@ -31,6 +30,8 @@ from conclave.mcp import load_mcp_servers
 from conclave.mcp_bridge import MCPBridge
 from conclave.domains import get_domain_instructions
 from conclave.verification import OnDemandFetcher
+from conclave.stages.retrieval import retrieve_context
+from conclave.stages.deliberation import deliberate
 
 
 class RunTimeoutError(TimeoutError):
@@ -298,7 +299,7 @@ class ConclavePipeline:
                         return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
 
             self.store.append_event(run_id, {"phase": "retrieve", "status": "start"})
-            context = self._retrieve_context(query, route, meta)
+            context = retrieve_context(self, query, route, meta)
             self._check_timeout("retrieve")
             stats = context.get("stats", {})
             self.store.append_event(run_id, {"phase": "retrieve", "status": "done", "context": {"rag": len(context["rag"]), "file_index": len(context["file_index"]), "evidence": stats.get("evidence_count", 0)}})
@@ -491,7 +492,7 @@ class ConclavePipeline:
             audit.log("requirements.failed", requirements)
             return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
         except RunTimeoutError as exc:
-            error_msg = f"run interrupted by timeout"
+            error_msg = "run interrupted by timeout"
             self.store.fail_run(run_id, error_msg)
             audit.log("run.timeout", {"error": str(exc), "elapsed": time.time() - self._run_start_time})
             raise
@@ -842,140 +843,6 @@ class ConclavePipeline:
         if "image_understanding" in caps:
             override["image_understanding"] = _image(caps.get("image_understanding"), str(base.get("image_understanding", "none")))
         return override
-
-    def _retrieve_context(self, query: str, route: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        rag_results: List[Dict[str, Any]] = []
-        rag_cfg = self.config.rag
-        max_per_collection = int(rag_cfg.get("max_results_per_collection", 8))
-        prefer_non_pdf = bool(rag_cfg.get("prefer_non_pdf", False))
-        semantic = rag_cfg.get("semantic")
-        disable_domains = set(rag_cfg.get("disable_domains", []) or [])
-        if route.get("domain") not in disable_domains:
-            for coll in route.get("collections", []):
-                rag_results.extend(self.rag.search(query, collection=coll, limit=max_per_collection, semantic=semantic))
-        rag_results = self._filter_rag_results(rag_results)
-        allowlist = route.get("allowlist") or []
-        if allowlist:
-            rag_results = [item for item in rag_results if item.get("collection") in allowlist]
-        index_results = []
-        file_results = self.rag.search_files(query, limit=10)
-        if self.config.index.get("enabled", True):
-            auto_build = bool(self.config.index.get("auto_build", False))
-            if self.index.db_path.exists() or auto_build:
-                self._maybe_refresh_index()
-                index_results = self.index.search(query, limit=10)
-        combined_files = file_results + index_results
-        if prefer_non_pdf:
-            rag_results.sort(key=lambda x: str(x.get("path") or x.get("name") or "").lower().endswith(".pdf"))
-        user_inputs = self._load_user_input(meta)
-        if not user_inputs and query:
-            user_inputs = [{
-                "title": "prompt",
-                "snippet": query,
-                "full_text": query,
-                "collection": "user-input",
-                "source": "user",
-            }]
-        source_items: List[Dict[str, Any]] = []
-        source_errors: List[Dict[str, Any]] = []
-        mcp_results: Dict[str, Any] = {}
-        domain = route.get("domain")
-        input_artifacts: List[Dict[str, Any]] = []
-        instructions = user_inputs[0].get("full_text") if user_inputs else ""
-        artifact_paths = self._extract_artifact_paths(str(instructions))
-        if artifact_paths:
-            input_artifacts = self._summarize_artifacts(artifact_paths)
-            if input_artifacts:
-                source_items.extend(input_artifacts)
-
-        output_type = meta.get("output_type") if meta else None
-        image_paths = [item.get("path") for item in input_artifacts if item.get("kind") == "image" and item.get("path")]
-        vision_summary_text = ""
-        if image_paths and self._output_requires(output_type, "image_understanding"):
-            vision_prompt = (
-                "Summarize the attached photos for design decisions. "
-                "Note lighting, dominant materials, current cabinet color/finish, wall/trim colors, "
-                "flooring, counters, and any constraints that affect cabinet color choices."
-            )
-            vision_summary, provider = self._vision_summary(vision_prompt, image_paths)
-            if vision_summary:
-                vision_summary_text = vision_summary
-                if provider:
-                    self._record_vision_usage(provider, len(image_paths))
-                source_items.append({
-                    "path": f"{provider}://vision/summary",
-                    "title": f"Vision Summary ({provider})",
-                    "snippet": vision_summary[:1600],
-                    "collection": f"vision-{provider}",
-                    "source": "vision",
-                })
-
-        previous = self._latest_for_meta(meta)
-        previous_run = None
-        if previous and previous.get("consensus", {}).get("answer"):
-            previous_run = {
-                "id": previous.get("id"),
-                "created_at": previous.get("created_at"),
-                "agreement": (previous.get("artifacts") or {}).get("deliberation", {}).get("agreement"),
-                "answer": str(previous.get("consensus", {}).get("answer", ""))[:2400],
-            }
-
-        on_demand = self.verifier.fetch(domain or "general", query)
-        if on_demand.items:
-            source_items.extend(on_demand.items)
-        if on_demand.errors:
-            source_errors.extend(on_demand.errors)
-        if self._audit and (on_demand.items or on_demand.errors):
-            self._audit.log("sources.on_demand", {
-                "domain": domain,
-                "items": len(on_demand.items),
-                "errors": on_demand.errors,
-            })
-
-        evidence_limit = None
-        if meta and meta.get("evidence_limit"):
-            try:
-                evidence_limit = int(meta.get("evidence_limit"))
-            except Exception:
-                evidence_limit = None
-        required_collections = route.get("required_collections", [])
-        evidence, stats = self._select_evidence(
-            rag_results,
-            combined_files,
-            limit=evidence_limit or 12,
-            preferred_collections=route.get("collections", []),
-            required_collections=required_collections,
-            domain=route.get("domain"),
-            domain_paths=self.config.quality.get("domain_paths", {}),
-            collection_reliability=self.config.rag.get("collection_reliability", {}),
-            user_items=user_inputs,
-            source_items=source_items,
-        )
-        rag_errors = self.rag.drain_errors()
-        if rag_errors:
-            stats["rag_errors"] = rag_errors
-        if source_errors:
-            stats["source_errors"] = source_errors
-        if on_demand.items:
-            stats["on_demand_count"] = len(on_demand.items)
-        if on_demand.errors:
-            stats["on_demand_errors"] = on_demand.errors
-        if user_inputs:
-            stats["input_path"] = user_inputs[0].get("path")
-        result = {
-            "rag": rag_results,
-            "file_index": combined_files,
-            "sources": source_items,
-            "evidence": evidence,
-            "stats": stats,
-            "user_inputs": user_inputs,
-            "input_artifacts": input_artifacts,
-            "previous_run": previous_run,
-            "agent_sync": self._agent_sync_summary(),
-        }
-        if vision_summary_text:
-            result["vision_summary"] = vision_summary_text
-        return result
 
     def _extract_focus_queries(self, instructions: str) -> list[str]:
         if not instructions:
@@ -1551,410 +1418,6 @@ class ConclavePipeline:
                 break
         return "\n".join(excerpt)
 
-    def _deliberate(self, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
-        plan = route.get("plan", {})
-        reasoner_model = plan.get("creator") or plan.get("reasoner") or next(iter(plan.values()), None)
-        critic_model = plan.get("critic") or plan.get("reviewer") or reasoner_model
-        config = self.config.raw.get("deliberation", {})
-        max_rounds = int(config.get("max_rounds", 3))
-        require_agreement = bool(config.get("require_agreement", True))
-        stop_on_repeat = bool(config.get("stop_on_repeat_disagreements", False))
-        stability_rounds = int(config.get("stability_rounds", 0))
-        max_draft_chars = int(config.get("max_draft_chars", 4000))
-        max_feedback_chars = int(config.get("max_feedback_chars", 4000))
-        max_disagreements = int(config.get("max_disagreements_per_review", 8))
-        model_timeout = config.get("model_timeout_seconds")
-        panel_cfg = config.get("panel", {}) if isinstance(config, dict) else {}
-        panel_enabled = bool(panel_cfg.get("enabled", False))
-        panel_models = list(route.get("panel_models") or [])
-        panel_require_all = bool(panel_cfg.get("require_all", True))
-        panel_min_ratio = panel_cfg.get("min_agree_ratio") if isinstance(panel_cfg, dict) else None
-        panel_timeout = panel_cfg.get("timeout_seconds") if isinstance(panel_cfg, dict) else None
-        panel_max_rounds = panel_cfg.get("max_rounds") if isinstance(panel_cfg, dict) else None
-        priority_models = self._priority_models(config)
-        priority_require_all = bool(config.get("priority_require_all", True))
-        priority_min_ratio = config.get("priority_min_ratio")
-        if route.get("panel_require_all") is not None:
-            panel_require_all = bool(route.get("panel_require_all"))
-        if route.get("panel_min_ratio") is not None:
-            try:
-                panel_min_ratio = float(route.get("panel_min_ratio"))
-            except Exception:
-                pass
-        min_time_left = float(config.get("min_time_left_seconds", 0) or 0)
-        context_blob = self._format_context(context)
-        runtime_blob = self._format_runtime_context(route, context)
-        instructions = self._user_instructions(context)
-        previous_run = context.get("previous_run") or {}
-        prev_answer = previous_run.get("answer") or ""
-        domain = route.get("domain")
-        domain_hints = get_domain_instructions(domain)
-        domain_instructions = domain_hints.deliberation_hint
-        output_instructions = self._output_instructions(context.get("output_type"))
-        output_meta = context.get("output") or {}
-        missing_caps = output_meta.get("missing") or []
-        tool_guard = (
-            "Do not use tools, run shell commands, or attempt network access. "
-            "Respond directly with your analysis."
-        )
-        rounds = []
-        panel_rounds: List[Dict[str, Any]] = []
-        diversity_checks: List[Dict[str, Any]] = []
-        diversity_calls = 0
-        reasoner_out = ""
-        critic_out = ""
-        agreement = False
-        required_set = set(self._required_model_ids())
-        stable_signature = ""
-        stable_count = 0
-        stop_reason: str | None = None
-        previous_disagreements: List[str] = []
-        final_disagreements: List[str] = []
-
-        def _emit_deliberate(payload: Dict[str, Any]) -> None:
-            if self._run_id:
-                self.store.append_event(self._run_id, {"phase": "deliberate", **payload})
-
-        _summary_line = ConclavePipeline._summary_line
-
-        for round_idx in range(1, max_rounds + 1):
-            _emit_deliberate({"status": "round_start", "round": round_idx, "max_rounds": max_rounds})
-            remaining = self._time_remaining()
-            if min_time_left and (remaining or 0) < min_time_left:
-                stop_reason = "timeout_guard"
-                break
-            budget = None
-            if remaining is not None:
-                budget = max(0.0, remaining - float(min_time_left))
-            per_call_timeout = None
-            if budget is not None:
-                per_call_timeout = int(max(20, min(float(model_timeout or budget), budget))) if budget > 0 else None
-            elif model_timeout:
-                try:
-                    per_call_timeout = int(model_timeout)
-                except Exception:
-                    per_call_timeout = None
-            analysis_prompt = (
-                "You are the reasoner. Provide a careful analysis and propose a decision.\n"
-                "Be specific and prescriptive. If evidence is weak, proceed with assumptions and mark confidence low.\n"
-                "Do not refuse or defer just because data is missing.\n"
-                "Negotiate toward consensus: address each disagreement explicitly and show what changed.\n"
-                "Separate product recommendation from Conclave mechanics confirmation; confirmation failures are constraints, not blockers.\n\n"
-                f"Question: {query}\n\nRuntime:\n{runtime_blob}\n\nContext:\n{context_blob}\n"
-            )
-            if round_idx > 1:
-                draft_excerpt = self._truncate_text(reasoner_out, max_draft_chars)
-                critic_excerpt = self._truncate_text(critic_out, max_feedback_chars)
-                unresolved = previous_disagreements[:max_disagreements]
-                unresolved_blob = ""
-                if unresolved:
-                    unresolved_blob = "\nUnresolved disagreements (must address each):\n"
-                    for item in unresolved:
-                        unresolved_blob += f"- {item}\n"
-                analysis_prompt = (
-                    "You are the reasoner. Revise the decision to address the critic's feedback.\n\n"
-                    f"Question: {query}\n\nRuntime:\n{runtime_blob}\n\nContext:\n{context_blob}\n\n"
-                    f"{unresolved_blob}\n"
-                    f"Previous draft:\n{draft_excerpt}\n\n"
-                    f"Critic feedback:\n{critic_excerpt}\n"
-                )
-                analysis_prompt += (
-                    "\nInclude a 'Resolution log' section that lists each prior disagreement and marks each as RESOLVED or ACCEPTED (with tradeoff).\n"
-                    "If a disagreement is about runtime confirmation, explicitly mark it as ACCEPTED/FAILED with a remediation step.\n"
-                )
-            if domain_instructions or instructions or output_instructions or tool_guard:
-                analysis_prompt += f"\n{domain_instructions}\n"
-                analysis_prompt += f"\n{tool_guard}\n"
-                if output_instructions:
-                    analysis_prompt += f"\n{output_instructions}\n"
-                if missing_caps:
-                    analysis_prompt += (
-                        "\nCapability gaps detected: "
-                        f"{', '.join(missing_caps)}. Provide a best-effort answer, "
-                        "note the limitation, and include a concrete plan for generating the missing artifacts if tools are later enabled.\n"
-                    )
-                if instructions:
-                    analysis_prompt += f"Instructions from input:\n{instructions}\n"
-            if prev_answer:
-                analysis_prompt += (
-                    "\nPrevious consensus (Version N-1):\n"
-                    f"{self._truncate_text(prev_answer, 1200)}\n"
-                    "Reconcile with the prior result. Include a short 'Reconciliation' section noting what changed and why. "
-                    "If no material change, say 'No change' and explain stability.\n"
-                )
-            _emit_deliberate({
-                "status": "reasoner_start",
-                "round": round_idx,
-                "max_rounds": max_rounds,
-                "role": "reasoner",
-                "model_id": reasoner_model,
-                "model_label": self._model_label(reasoner_model) if reasoner_model else None,
-                "timeout_s": per_call_timeout,
-            })
-            reasoner_start = time.perf_counter()
-            reasoner_out = self._call_model(reasoner_model, analysis_prompt, role="reasoner", timeout_seconds=per_call_timeout)
-            reasoner_duration = time.perf_counter() - reasoner_start
-            _emit_deliberate({
-                "status": "reasoner_done",
-                "round": round_idx,
-                "max_rounds": max_rounds,
-                "role": "reasoner",
-                "model_id": reasoner_model,
-                "model_label": self._model_label(reasoner_model) if reasoner_model else None,
-                "duration_s": round(reasoner_duration, 2),
-                "summary": _summary_line(reasoner_out),
-            })
-
-            critic_prompt = (
-                "You are the critic. Challenge the reasoning, list disagreements and gaps, and suggest fixes.\n"
-                "Do not reject the task as out-of-scope; focus on improving the draft.\n"
-                "Do not introduce brand new disagreements in later rounds unless they are critical.\n"
-                "Negotiate toward consensus: if the draft clearly acknowledges an inherent limitation and proposes a concrete verification step, treat that item as resolved.\n"
-                "Evaluate product recommendation separately from Conclave mechanics confirmation; if confirmation items are marked Failed/Unverified with remediation, do not treat as blocking.\n"
-                "If remaining issues are minor or non-blocking, respond with AGREE and list up to 3 minor follow-ups.\n"
-                "List at most 3 disagreements; consolidate overlapping items.\n"
-                "Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
-                f"Question: {query}\n\nRuntime:\n{runtime_blob}\n\nReasoner draft:\n{reasoner_out}\n"
-            )
-            if round_idx > 1 and previous_disagreements:
-                critic_prompt += "\nPrevious disagreements (resolve if addressed; only list unresolved):\n"
-                for item in previous_disagreements[:max_disagreements]:
-                    critic_prompt += f"- {item}\n"
-                critic_prompt += "\nIf all prior disagreements are resolved, respond with AGREE.\n"
-            if domain_instructions or instructions or output_instructions or tool_guard:
-                critic_prompt += f"\n{domain_instructions}\n"
-                critic_prompt += f"\n{tool_guard}\n"
-                if output_instructions:
-                    critic_prompt += f"\n{output_instructions}\n"
-                if missing_caps:
-                    critic_prompt += (
-                        "\nCapability gaps detected: "
-                        f"{', '.join(missing_caps)}. Ensure the draft acknowledges the limitation and provides a fallback.\n"
-                    )
-                if instructions:
-                    critic_prompt += f"Instructions from input:\n{instructions}\n"
-            if prev_answer:
-                critic_prompt += (
-                    "\nPrevious consensus (Version N-1):\n"
-                    f"{self._truncate_text(prev_answer, 800)}\n"
-                    "Ensure the draft reconciles with prior results and clearly justifies any changes.\n"
-                )
-            use_panel = panel_enabled and panel_models
-            if panel_max_rounds is not None:
-                try:
-                    use_panel = use_panel and (round_idx <= int(panel_max_rounds))
-                except Exception:
-                    pass
-            if use_panel:
-                panel_reviews = []
-                next_panel_models = []
-                for model_id in panel_models:
-                    effective_panel_timeout = panel_timeout
-                    if per_call_timeout is not None:
-                        if effective_panel_timeout is None:
-                            effective_panel_timeout = per_call_timeout
-                        else:
-                            effective_panel_timeout = min(int(effective_panel_timeout), int(per_call_timeout))
-                    _emit_deliberate({
-                        "status": "panel_start",
-                        "round": round_idx,
-                        "max_rounds": max_rounds,
-                        "role": "critic_panel",
-                        "model_id": model_id,
-                        "model_label": self._model_label(model_id),
-                        "timeout_s": effective_panel_timeout,
-                    })
-                    panel_start = time.perf_counter()
-                    review = self._call_model(model_id, critic_prompt, role="critic_panel", timeout_seconds=effective_panel_timeout)
-                    panel_duration = time.perf_counter() - panel_start
-                    meta = self._last_model_results.get(model_id, {})
-                    ok = meta.get("ok", True)
-                    error = meta.get("error")
-                    stderr = meta.get("stderr")
-                    skip_optional = False
-                    if not ok and model_id == "cli:gemini":
-                        stderr_lower = (stderr or "").lower()
-                        quota_hint = any(token in stderr_lower for token in ("quota", "rate limit", "capacity", "exhausted", "429"))
-                        if error == "timeout" or quota_hint:
-                            skip_optional = True
-                    verdict = self._critic_agrees(review) if ok else False
-                    verdict_label = "agree" if verdict else ("skipped" if skip_optional else ("error" if not ok else "disagree"))
-                    _emit_deliberate({
-                        "status": "panel_done",
-                        "round": round_idx,
-                        "max_rounds": max_rounds,
-                        "role": "critic_panel",
-                        "model_id": model_id,
-                        "model_label": self._model_label(model_id),
-                        "duration_s": round(panel_duration, 2),
-                        "verdict": verdict_label,
-                        "summary": _summary_line(review),
-                    })
-                    panel_reviews.append({
-                        "model_id": model_id,
-                        "label": self._model_label(model_id),
-                        "verdict": verdict_label,
-                        "ok": ok,
-                        "error": error,
-                        "stderr": stderr,
-                        "skipped": skip_optional,
-                        "disagreements": self._extract_disagreements(review) if ok else ([] if skip_optional else ([f"model failed: {error}"] if error else [])),
-                        "text": review,
-                    })
-                    if ok or model_id in required_set:
-                        next_panel_models.append(model_id)
-                if next_panel_models != panel_models:
-                    panel_models = next_panel_models
-                agreement = self._panel_agreement(
-                    panel_reviews,
-                    require_all=panel_require_all,
-                    min_ratio=None,
-                    priority_models=priority_models,
-                    priority_require_all=priority_require_all,
-                    priority_min_ratio=priority_min_ratio,
-                )
-                if panel_min_ratio is not None and not panel_require_all:
-                    try:
-                        agreement = self._panel_agreement(
-                            panel_reviews,
-                            require_all=False,
-                            min_ratio=float(panel_min_ratio),
-                            priority_models=priority_models,
-                            priority_require_all=priority_require_all,
-                            priority_min_ratio=priority_min_ratio,
-                        )
-                    except Exception:
-                        agreement = self._panel_agreement(
-                            panel_reviews,
-                            require_all=panel_require_all,
-                            min_ratio=None,
-                            priority_models=priority_models,
-                            priority_require_all=priority_require_all,
-                            priority_min_ratio=priority_min_ratio,
-                        )
-                critic_out = self._format_panel_feedback(panel_reviews, max_disagreements=max_disagreements)
-                filtered_disagreements = self._aggregate_panel_disagreements(
-                    panel_reviews,
-                    priority_models=priority_models,
-                )
-                # Calculate weighted agreement ratio for transparency
-                weighted_agrees = sum(
-                    self._model_confidence_weight(r.get("model_id", ""))
-                    for r in panel_reviews if r.get("verdict") == "agree" and r.get("ok", True)
-                )
-                total_weight = sum(
-                    self._model_confidence_weight(r.get("model_id", ""))
-                    for r in panel_reviews if r.get("ok", True)
-                )
-                weighted_ratio = round(weighted_agrees / total_weight, 3) if total_weight > 0 else 0.0
-
-                round_entry = {
-                    "round": round_idx,
-                    "agreement": agreement,
-                    "disagreements": filtered_disagreements,
-                    "weighted_ratio": weighted_ratio,
-                }
-                panel_rounds.append({
-                    "round": round_idx,
-                    "agreement": agreement,
-                    "weighted_ratio": weighted_ratio,
-                    "reviews": panel_reviews,
-                })
-                rounds.append(round_entry)
-            else:
-                _emit_deliberate({
-                    "status": "critic_start",
-                    "round": round_idx,
-                    "max_rounds": max_rounds,
-                    "role": "critic",
-                    "model_id": critic_model,
-                    "model_label": self._model_label(critic_model) if critic_model else None,
-                    "timeout_s": per_call_timeout,
-                })
-                critic_start = time.perf_counter()
-                critic_out = self._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)
-                critic_duration = time.perf_counter() - critic_start
-                agreement = self._critic_agrees(critic_out)
-                _emit_deliberate({
-                    "status": "critic_done",
-                    "round": round_idx,
-                    "max_rounds": max_rounds,
-                    "role": "critic",
-                    "model_id": critic_model,
-                    "model_label": self._model_label(critic_model) if critic_model else None,
-                    "duration_s": round(critic_duration, 2),
-                    "verdict": "agree" if agreement else "disagree",
-                    "summary": _summary_line(critic_out),
-                })
-                round_entry = {
-                    "round": round_idx,
-                    "agreement": agreement,
-                    "disagreements": self._extract_disagreements(critic_out),
-                }
-                rounds.append(round_entry)
-                diversity_entry = self._maybe_run_diversity_check(
-                    query=query,
-                    context_blob=context_blob,
-                    reasoner_out=reasoner_out,
-                    critic_out=critic_out,
-                    round_idx=round_idx,
-                    max_rounds=max_rounds,
-                    agreement=agreement,
-                    domain_instructions=domain_instructions,
-                    output_instructions=output_instructions,
-                    instructions=instructions,
-                    calls_so_far=diversity_calls,
-                )
-                if diversity_entry:
-                    diversity_checks.append(diversity_entry)
-                    diversity_calls += 1
-            _emit_deliberate({"status": "round_result", **round_entry})
-            previous_disagreements = list(round_entry.get("disagreements") or [])
-            final_disagreements = list(round_entry.get("disagreements") or [])
-            signature = self._disagreement_signature(round_entry.get("disagreements") or [])
-            if stop_on_repeat and stability_rounds > 0 and signature:
-                if signature == stable_signature:
-                    stable_count += 1
-                else:
-                    stable_signature = signature
-                    stable_count = 1
-                if stable_count >= stability_rounds and not agreement:
-                    round_entry["stopped_reason"] = "stable_disagreements"
-                    stop_reason = "stable_disagreements"
-                    _emit_deliberate({
-                        "status": "stable",
-                        "round": round_idx,
-                        "max_rounds": max_rounds,
-                        "consecutive": stable_count,
-                        "reason": stop_reason,
-                    })
-                    break
-            if agreement or not require_agreement:
-                break
-
-        if stop_reason:
-            _emit_deliberate({
-                "status": "stop",
-                "round": round_idx,
-                "max_rounds": max_rounds,
-                "reason": stop_reason,
-            })
-
-        result = {
-            "reasoner": reasoner_out,
-            "critic": critic_out,
-            "disagreements": final_disagreements,
-            "rounds": rounds,
-            "agreement": agreement,
-            "stopped_reason": stop_reason,
-            "panel": panel_rounds,
-            "panel_models": panel_models,
-            "diversity": diversity_checks,
-        }
-        # Add quality score to deliberation result
-        result["quality_score"] = self._deliberation_score(result)
-        return result
-
     def _deliberation_score(self, deliberation: Dict[str, Any]) -> float:
         """
         Calculate deliberation quality score (0-1) based on:
@@ -2066,7 +1529,7 @@ class ConclavePipeline:
         # Anneal only when explicitly requested via --anneal flag or config enabled
         anneal_requested = bool(getattr(self, "_run_meta", {}).get("anneal"))
         if not anneal_requested and not cfg.get("enabled", False):
-            deliberation = self._deliberate(query, context, route)
+            deliberation = deliberate(self, query, context, route)
             return {
                 "deliberation": deliberation,
                 "route": route,
@@ -2124,7 +1587,7 @@ class ConclavePipeline:
                 "temperature": round(self._anneal_value(temp_start, temp_end, 1, max_iterations, schedule), 2),
             })
 
-        current_deliberation = self._deliberate(query, context, current_route)
+        current_deliberation = deliberate(self, query, context, current_route)
         current_score = self._deliberation_score(current_deliberation)
         best_route = current_route
         best_deliberation = current_deliberation
@@ -2197,7 +1660,7 @@ class ConclavePipeline:
                 candidate_route["panel_models"] = panel
             finalize_route(candidate_route)
             self._apply_output_meta(context, output_type, candidate_route)
-            candidate_deliberation = self._deliberate(perturbed_query, context, candidate_route)
+            candidate_deliberation = deliberate(self, perturbed_query, context, candidate_route)
             candidate_score = self._deliberation_score(candidate_deliberation)
 
             # Content convergence detection
@@ -2982,7 +2445,7 @@ class ConclavePipeline:
 
     def _call_gemini_api(self, model_id: str, prompt: str, timeout_seconds: Optional[int] = None) -> Any:
         """Call Gemini via native API. Returns a result object compatible with _call_model."""
-        from conclave.models.gemini import GeminiClient, GeminiResult
+        from conclave.models.gemini import GeminiClient
         if not hasattr(self, '_gemini_client'):
             self._gemini_client = GeminiClient()
         model_name = model_id.split(":", 1)[1] if ":" in model_id else "2.5-flash"

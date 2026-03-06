@@ -32,14 +32,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "ruff>=0.4.8",
     "pytest>=7.0",
+    "pytest-cov>=5.0",
 ]
 
 [project.scripts]
 conclave = "conclave.cli:main"
 
 [tool.setuptools]
-packages = ["conclave", "conclave.models", "conclave.domains", "conclave.cli"]
+packages = ["conclave", "conclave.models", "conclave.domains", "conclave.stages", "conclave.cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

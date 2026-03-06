@@ -154,3 +154,35 @@ class Config:
 
 def get_config() -> Config:
     return Config(load_config())
+
+
+def validate_config(config: Config) -> Dict[str, Any]:
+    issues: list[Dict[str, Any]] = []
+    server = config.server or {}
+    port = server.get("port")
+    if port is not None:
+        if not isinstance(port, int) or not (1 <= port <= 65535):
+            issues.append({"field": "server.port", "issue": "must be an integer between 1 and 65535"})
+    host = server.get("host")
+    if host is not None and not str(host).strip():
+        issues.append({"field": "server.host", "issue": "must be a non-empty string"})
+
+    data_dir = config.data_dir
+    if data_dir.exists() and not data_dir.is_dir():
+        issues.append({"field": "data_dir", "issue": "path exists but is not a directory"})
+
+    if config.run_timeout_seconds <= 0:
+        issues.append({"field": "pipeline.run_timeout_seconds", "issue": "must be > 0"})
+    if config.cli_timeout_seconds <= 0:
+        issues.append({"field": "pipeline.cli_timeout_seconds", "issue": "must be > 0"})
+
+    rag_cfg = config.rag or {}
+    rag_url = rag_cfg.get("base_url")
+    if rag_url and not str(rag_url).startswith(("http://", "https://")):
+        issues.append({"field": "rag.base_url", "issue": "must be http(s) URL"})
+
+    mcp_path = config.mcp_config_path
+    if mcp_path and not mcp_path.exists():
+        issues.append({"field": "mcp_config_path", "issue": "path does not exist"})
+
+    return {"ok": not issues, "issues": issues}

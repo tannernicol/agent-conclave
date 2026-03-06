@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 import time
 import uuid
+from conclave.events import normalize_event
 try:
     import fcntl  # type: ignore
 except Exception:  # pragma: no cover - non-POSIX environments
@@ -50,9 +51,10 @@ class DecisionStore:
 
     def append_event(self, run_id: str, event: Dict[str, Any]) -> None:
         def _update(run: Dict[str, Any]) -> Dict[str, Any]:
+            payload = normalize_event(event)
             run.setdefault("events", []).append({
                 "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-                **event,
+                **payload,
             })
             return run
         self._locked_update(run_id, _update)

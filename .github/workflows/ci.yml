@@ -37,8 +37,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run tests
-        run: python -m pytest tests/ -q
+      - name: Validate environment
+        run: |
+          python -m pip check
+          python -m compileall conclave
+
+      - name: Lint (ruff)
+        run: ruff check conclave tests
+
+      - name: Run tests (pytest + coverage)
+        run: python -m pytest tests/ --cov=conclave --cov-report=term-missing:skip-covered --cov-fail-under=20 -q
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: UI logic tests (node)
+        run: node --test tests/ui_state.test.js
 
       - name: CLI smoke test
         run: conclave --help

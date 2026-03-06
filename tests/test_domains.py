@@ -2,7 +2,6 @@
 import unittest
 
 from conclave.domains import (
-    DomainInstructions,
     DOMAIN_INSTRUCTIONS,
     get_domain_instructions,
 )

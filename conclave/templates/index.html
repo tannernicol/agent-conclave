@@ -32,6 +32,13 @@
           <div class="panel-meta ui-mono" id="prompt-status">Ready</div>
         </div>
         <div class="prompt-meta ui-mono" id="latest-prompt"></div>
+        <div class="latest-question" id="latest-question">
+          <div class="latest-question-header">
+            <div class="latest-question-title">Last Question</div>
+            <button type="button" class="ui-button ghost small" id="use-latest-question">Use Edited Question</button>
+          </div>
+          <textarea id="latest-question-editor" rows="5" placeholder="No question selected yet"></textarea>
+        </div>
         <form id="query-form" class="form-grid">
           <label for="query">Your Question</label>
           <textarea id="query" name="query" rows="4" placeholder="Ask any question for multi-model consensus..."></textarea>
@@ -109,13 +116,6 @@
           <div class="run-action-detail ui-muted" id="run-action-detail"></div>
         </div>
         <div class="latest-models" id="latest-models"></div>
-        <div class="latest-question" id="latest-question">
-          <div class="latest-question-header">
-            <div class="latest-question-title">Question</div>
-            <button type="button" class="ui-button ghost small" id="use-latest-question">Use Edited Question</button>
-          </div>
-          <textarea id="latest-question-editor" rows="3" placeholder="No question selected yet"></textarea>
-        </div>
         <div class="pipeline-progress" id="pipeline-progress"></div>
         <div class="live-progress hidden" id="live-progress"></div>
         <div class="reconcile-panel hidden" id="reconcile-panel"></div>
@@ -176,6 +176,8 @@
       </div>
     </div>
 
+    <script src="/static/ui_state.js"></script>
+    <script src="/static/ws.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

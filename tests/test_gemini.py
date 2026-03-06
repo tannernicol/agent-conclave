@@ -1,5 +1,4 @@
 """Tests for conclave.models.gemini module."""
-import json
 import unittest
 from unittest.mock import patch, MagicMock
 

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import random
 
+from conclave.domains.routing import DOMAIN_TO_CALIBRATION
+
 logger = logging.getLogger(__name__)
 
 ROLE_REQUIREMENTS = {
@@ -38,15 +40,6 @@ CALIBRATION_PROMPT = """Rate your expertise from 1-10 in each domain:
 - general: Broad reasoning, planning, problem solving
 
 Reply as JSON only: {"security": N, "code_review": N, "research": N, "creative": N, "general": N}"""
-
-# Map routing domains to calibration domains
-DOMAIN_TO_CALIBRATION = {
-    "security": "security",
-    "code_review": "code_review",
-    "research": "research",
-    "creative": "creative",
-    "general": "general",
-}
 
 CALIBRATION_CACHE_DAYS = 7
 
