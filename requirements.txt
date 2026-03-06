@@ -1,6 +1,8 @@
-fastapi==0.115.11
-uvicorn==0.40.0
-httpx==0.27.2
-pyyaml==6.0.3
-jinja2==3.1.5
-python-multipart==0.0.22
+# Prefer: pip install -e .  (or pip install -e '.[dev]' for dev deps)
+# This file mirrors pyproject.toml for tools that require requirements.txt.
+fastapi>=0.115
+uvicorn>=0.30
+httpx>=0.27
+pyyaml>=6.0
+jinja2>=3.1
+python-multipart>=0.0.20

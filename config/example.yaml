@@ -17,7 +17,13 @@ models:
       prompt_mode: arg
       timeout_seconds: 120
 
-    # Uncomment to use hosted models instead:
+    # OpenAI API (or any OpenAI-compatible endpoint like vLLM, LM Studio):
+    # - id: openai:gpt-4o
+    #   timeout_seconds: 120
+    #   # base_url: https://api.openai.com/v1  # default; change for local servers
+    #   # api_key_env: OPENAI_API_KEY           # default; change per model
+
+    # Claude / Codex CLIs:
     # - id: cli:claude
     #   command: [claude, --print, --model, sonnet, --output-format, text]
     #   prompt_mode: arg

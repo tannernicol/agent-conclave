@@ -102,12 +102,14 @@ Each run used a different **perturbation** — a perspective-shift prepended to 
 
 ## How It Works
 
-1. **Route** — assigns roles based on model strengths (Reasoner, Critic, Summarizer)
-2. **Reason** — the Reasoner builds a detailed analysis
-3. **Critique** — the Critic challenges assumptions, finds flaws, and lists disagreements
-4. **Iterate** — the Reasoner revises based on critique; repeat until convergence
-5. **Smoke signal** — ☁️ white smoke on agreement, ██ black smoke on disagreement
-6. **Summarize** — a final structured verdict with confidence level and audit trail
+1. **Preflight** — checks that models and services are reachable; warns before wasting time
+2. **Route** — detects the query domain (code review, research, creative, etc.) and assigns roles based on model strengths
+3. **Retrieve** — pulls evidence from RAG collections and local file indexes
+4. **Quality gate** — blocks low-confidence runs when evidence is insufficient
+5. **Deliberate** — Reasoner builds the case, Critic tears it apart, repeat until convergence
+6. **Panel vote** *(optional)* — when Reasoner and Critic deadlock, a multi-model panel breaks the tie with weighted voting
+7. **Smoke signal** — ☁️ white smoke on agreement, ██ black smoke on disagreement
+8. **Summarize** — a final structured verdict with confidence level and full audit trail
 
 Fast-path: when all roles are pre-assigned, calibration and scoring are skipped entirely — deliberation starts in seconds.
 
@@ -115,10 +117,14 @@ Fast-path: when all roles are pre-assigned, calibration and scoring are skipped 
 
 - **Adversarial deliberation** — models argue FOR and AGAINST, not just answer in parallel
 - **Live progress** — see every round, every model thinking, every agree/disagree in real-time
-- **Model-agnostic** — works with any CLI-invocable model (Claude, Codex, Gemini, Ollama, etc.)
+- **Model-agnostic** — works with OpenAI API, Ollama, Claude/Codex/Gemini CLIs, or any OpenAI-compatible endpoint (vLLM, LM Studio)
+- **Panel voting** — optional multi-critic panel with weighted agreement ratios for high-stakes decisions
+- **Simulated annealing** — run N deliberations with different perspectives, keep the best answer
 - **Role overrides** — assign specific models to Reasoner/Critic/Summarizer roles
+- **Domain routing** — automatic query classification with domain-specific evidence retrieval
 - **Full audit trails** — every deliberation round persisted as replayable JSON
 - **Web dashboard** — view runs, events, and deliberation history in the browser
+- **Preflight checks** — warns about unreachable services before starting a run
 
 ## Quick Start
 
@@ -136,29 +142,64 @@ python -m pytest tests/ -q         # run tests
 
 ## Configuration
 
+Conclave supports multiple model providers. Mix and match — use a cloud API for the Critic and a local model for the Reasoner.
+
 ```yaml
-# config/example.yaml — minimal setup with two local models
+# config/example.yaml
 models:
   cards:
-    - id: cli:model-a
-      command: [ollama, run, llama3.2]
+    # OpenAI API (or any OpenAI-compatible endpoint)
+    - id: openai:gpt-4o
+      # base_url: https://api.openai.com/v1   # default; override for vLLM, LM Studio, etc.
+      # api_key_env: OPENAI_API_KEY            # default; override per model
+
+    # Local models via Ollama
+    - id: ollama:llama3.2
+    - id: ollama:qwen2.5:7b
+
+    # CLI-wrapped models (Claude, Codex, Gemini)
+    - id: cli:claude
+      command: [claude, --print, --model, sonnet, --output-format, text]
       prompt_mode: arg
-    - id: cli:model-b
-      command: [ollama, run, qwen2.5:7b]
-      prompt_mode: arg
+
+    # vLLM / LM Studio / any OpenAI-compatible server
+    - id: openai:local-llama
+      base_url: http://localhost:8000/v1
+      api_key_env: LOCAL_API_KEY               # or set to "none" for keyless servers
 
 # Assign roles — who reasons, who critiques
 planner:
   role_overrides:
-    reasoner: cli:model-a
-    critic: cli:model-b
-    summarizer: cli:model-b
+    reasoner: openai:gpt-4o
+    critic: cli:claude
+    summarizer: cli:claude
 
 deliberation:
   max_rounds: 5
   stability_rounds: 2         # stop after 2 consecutive agreements
   model_timeout_seconds: 300
 ```
+
+### Panel Voting
+
+When the Reasoner and Critic deadlock, a panel of additional models can break the tie:
+
+```yaml
+deliberation:
+  panel:
+    enabled: true
+    model_ids: [openai:gpt-4o, cli:gemini, ollama:qwen2.5:7b]
+    min_agree_ratio: 0.6      # 60% of panelists must agree
+    max_rounds: 2
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONCLAVE_CONFIG` | `~/.config/conclave/config.yaml` | Path to config file |
+| `OPENAI_API_KEY` | — | API key for `openai:` models |
+| `GEMINI_API_KEY` | — | API key for `gemini-api:` models |
 
 ## Agent Bus
 
@@ -205,16 +246,28 @@ flowchart TB
     User -->|query| Pipeline
     Config -->|roles + models| Pipeline
 
-    subgraph Conclave Engine
-        Pipeline[Pipeline]
-        Pipeline -->|prompt| Reasoner[Reasoner\ne.g. Codex]
-        Reasoner -->|draft| Critic[Critic\ne.g. Claude]
-        Critic -->|feedback| Pipeline
-        Pipeline -->|revised prompt| Reasoner
-        Pipeline -->|converged| Summarizer[Summarizer]
+    subgraph Pipeline
+        Preflight[Preflight\nservice health check]
+        Route[Route\ndomain detection + role assignment]
+        Retrieve[Retrieve\nRAG + file index evidence]
+        Quality[Quality Gate\nevidence sufficiency check]
+        Deliberate[Deliberate\nReasoner ↔ Critic loop]
+        Panel[Panel Vote\noptional tiebreaker]
+        Summarize[Summarize\nfinal verdict]
     end
 
-    Summarizer -->|verdict| User
+    Preflight --> Route --> Retrieve --> Quality --> Deliberate
+    Deliberate -->|deadlock| Panel --> Deliberate
+    Deliberate -->|converged| Summarize
+
+    subgraph Models
+        OpenAI[OpenAI API\nvLLM / LM Studio]
+        CLI[CLI Models\nClaude / Codex / Gemini]
+        Ollama[Ollama\nLocal models]
+    end
+
+    Deliberate --- Models
+    Summarize -->|verdict| User
     Pipeline -->|audit trail| AuditLog[(Audit Log)]
     Pipeline -->|events| Dashboard[Web Dashboard]
 ```
@@ -222,7 +275,7 @@ flowchart TB
 ## Requirements
 
 - Python 3.10+
-- At least one LLM accessible via CLI (Ollama for local, or Claude/Codex/Gemini CLIs)
+- At least two LLMs — via OpenAI API, Ollama, CLI wrappers, or any OpenAI-compatible endpoint
 
 ## Author
 

@@ -23,6 +23,7 @@ from conclave.models.registry import ModelRegistry
 from conclave.models.planner import Planner
 from conclave.models.ollama import OllamaClient
 from conclave.models.cli import CliClient
+from conclave.models.openai_compat import OpenAICompatClient
 from conclave.rag import RagClient, FileIndex
 from conclave.store import DecisionStore
 from conclave.audit import AuditLog
@@ -63,6 +64,7 @@ class ConclavePipeline:
         self.planner = Planner.from_config(config.planner)
         self.ollama = OllamaClient()
         self.cli = CliClient()
+        self.openai_compat = OpenAICompatClient()
         self.rag = RagClient(config.rag.get("base_url", "http://localhost:8091"))
         self.index = FileIndex(
             data_dir=config.data_dir,
@@ -91,6 +93,35 @@ class ConclavePipeline:
         self._image_usage: Dict[str, int] = {}
         self._vision_usage: Dict[str, int] = {}
         self.logger = logging.getLogger(__name__)
+
+    def preflight_check(self) -> Dict[str, Any]:
+        """Quick health check of all services. Returns status dict with warnings."""
+        warnings: list[str] = []
+        services: Dict[str, Any] = {}
+
+        # RAG server
+        rag_ok = self.rag.health_check()
+        services["rag"] = {"ok": rag_ok, "url": self.rag.base_url}
+        if not rag_ok:
+            warnings.append(f"RAG server unreachable at {self.rag.base_url} — running without evidence retrieval")
+
+        # Models — check required models exist in registry
+        required_cfg = self.config.raw.get("required_models", {}) or {}
+        required_ids = list(required_cfg.get("models", []) or [])
+        missing_models = []
+        for mid in required_ids:
+            card = self.registry.get_model(mid)
+            if not card:
+                missing_models.append(mid)
+        if missing_models:
+            warnings.append(f"Required models not in registry: {', '.join(missing_models)}")
+        services["required_models"] = {"configured": required_ids, "missing": missing_models}
+
+        # MCP bridge
+        mcp_servers = list(load_mcp_servers().keys())
+        services["mcp"] = {"servers": mcp_servers}
+
+        return {"ok": not warnings, "warnings": warnings, "services": services}
 
     def _check_timeout(self, phase: str = "unknown") -> None:
         """Check if the current run has exceeded its timeout."""
@@ -194,6 +225,16 @@ class ConclavePipeline:
         audit.log("run.start", {"query": query, "meta": meta or {}, "timeout": self.config.run_timeout_seconds})
         try:
             self.store.append_event(run_id, {"phase": "preflight", "status": "start"})
+            preflight = self.preflight_check()
+            if preflight["warnings"]:
+                for warning in preflight["warnings"]:
+                    self.logger.warning("preflight: %s", warning)
+                self.store.append_event(run_id, {
+                    "phase": "preflight", "status": "warnings",
+                    "warnings": preflight["warnings"],
+                    "services": preflight["services"],
+                })
+                audit.log("preflight.warnings", preflight)
             role_overrides = None
             if meta and isinstance(meta.get("role_overrides"), dict):
                 role_overrides = meta.get("role_overrides")
@@ -2358,6 +2399,52 @@ class ConclavePipeline:
         is_required = model_id in required_models
         model_label = self._model_label(model_id)
         prompt_to_send = self._apply_agent_sync(prompt, str(model_id), role)
+        if model_id.startswith("openai:"):
+            model = model_id.split(":", 1)[1]
+            card = self.registry.get_model(model_id) or {}
+            api_key_env = card.get("api_key_env", "OPENAI_API_KEY")
+            api_key = "none" if str(api_key_env).lower() == "none" else (os.environ.get(api_key_env, "") or None)
+            base_url = card.get("base_url") or None
+            result = self.openai_compat.generate(
+                prompt_to_send, model=model, temperature=0.2,
+                timeout=timeout_seconds or 120, api_key=api_key, base_url=base_url,
+            )
+            self._record_model_observation(model_id, result)
+            self._consume_tokens(model_id, prompt_to_send, result.text or "")
+            if result.ok:
+                self._run_models_used.add(model_id)
+            self._last_model_results[model_id] = {
+                "ok": result.ok,
+                "error": result.error,
+                "stderr": None,
+            }
+            audit = self._audit
+            run_id = self._run_id
+            payload = {
+                "role": role,
+                "model_id": model_id,
+                "model_label": model_label,
+                "ok": result.ok,
+                "duration_ms": round(result.duration_ms, 2),
+                "error": result.error,
+            }
+            if result.usage:
+                payload["usage"] = result.usage
+            if audit:
+                audit.log("model.call", payload)
+            if run_id:
+                self.store.append_event(run_id, {"phase": "model", **payload})
+            if is_required and not result.ok:
+                raise RequiredModelError(f"{model_id} failed: {result.error or 'unknown error'}")
+            if not result.ok:
+                fallback = (self.registry.get_model(model_id) or {}).get("fallback_model")
+                if fallback and fallback != model_id:
+                    if audit:
+                        audit.log("model.fallback", {"role": role, "from": model_id, "to": fallback, "error": result.error})
+                    if run_id:
+                        self.store.append_event(run_id, {"phase": "model", "role": role, "model_id": model_id, "fallback_model": fallback, "error": result.error})
+                    return self._call_model(fallback, prompt, role=role)
+            return result.text
         if model_id.startswith("ollama:"):
             model = model_id.split(":", 1)[1]
             result = self.ollama.generate(model, prompt_to_send, temperature=0.2)
