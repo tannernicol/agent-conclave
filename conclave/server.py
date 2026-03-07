@@ -1108,22 +1108,40 @@ _AGREE_PATTERNS = re.compile(r'\bAGREE\b', re.IGNORECASE)
 _DISAGREE_PATTERNS = re.compile(r'\bDISAGREE\b', re.IGNORECASE)
 
 
-def _extract_disagreements(text: str) -> list[str]:
-    """Extract disagreement bullet points from critic output."""
-    items = []
-    in_section = False
+def _extract_sections(text: str) -> dict[str, list[str]]:
+    """Extract structured sections (agreements, disagreements, gaps) from critic output."""
+    sections: dict[str, list[str]] = {"agreements": [], "disagreements": [], "gaps": []}
+    current: str | None = None
     for line in text.split("\n"):
         stripped = line.strip()
         lower = stripped.lower()
-        if lower.startswith("disagreement") or lower.startswith("gap"):
-            in_section = True
+        if lower.startswith("agreement") and not lower.startswith("agreements:"):
+            current = "agreements"
+            continue
+        if lower == "agreements:":
+            current = "agreements"
+            continue
+        if lower.startswith("disagreement"):
+            current = "disagreements"
+            continue
+        if lower.startswith("gap"):
+            current = "gaps"
             continue
         if lower.startswith("verdict"):
-            in_section = False
+            current = None
             continue
-        if in_section and stripped.startswith("- "):
-            items.append(stripped[2:].strip())
-    return items[:8]
+        if current and stripped.startswith("- "):
+            sections[current].append(stripped[2:].strip())
+    # Cap each section
+    for k in sections:
+        sections[k] = sections[k][:8]
+    return sections
+
+
+def _extract_disagreements(text: str) -> list[str]:
+    """Extract disagreement bullet points from critic output."""
+    s = _extract_sections(text)
+    return s["disagreements"] + s["gaps"]
 
 
 def _critic_agrees(text: str) -> bool:
@@ -1295,18 +1313,22 @@ async def _run_deliberation(room_id: str, query: str, registry: ModelRegistry, u
         await chat_room.broadcast(room_id, {"type": "typing", "agent": critic_name})
 
         critic_prompt = (
-            f"You are the critic. Challenge the reasoning, list disagreements, and suggest fixes.\n"
-            f"Negotiate toward consensus. If remaining issues are minor, respond with AGREE.\n"
-            f"List at most 3 disagreements; consolidate overlapping items.\n"
-            f"Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
+            f"You are the critic in a multi-model deliberation. Your job is to move toward consensus.\n"
+            f"First acknowledge what the reasoner got RIGHT, then challenge what needs fixing.\n"
+            f"Consolidate overlapping items. At most 3 disagreements.\n\n"
+            f"Return these sections in order:\n"
+            f"Agreements:\n- (points you agree on — settled items)\n"
+            f"Disagreements:\n- (points you challenge — max 3)\n"
+            f"Gaps:\n- (missing considerations)\n"
+            f"Verdict:\nAGREE or DISAGREE\n\n"
             f"Question: {query}\n\n"
             f"Reasoner draft:\n{reasoner_out[:3000]}\n"
         )
         if previous_disagreements:
-            critic_prompt += "\nPrevious disagreements (only list if still unresolved):\n"
+            critic_prompt += "\nPrevious disagreements (only list if STILL unresolved):\n"
             for d in previous_disagreements[:6]:
                 critic_prompt += f"- {d}\n"
-            critic_prompt += "\nIf all prior disagreements are resolved, respond with AGREE.\n"
+            critic_prompt += "\nIf all prior disagreements are now resolved, move them to Agreements and respond AGREE.\n"
 
         try:
             critic_out = await _call_cli_model(critic_card, critic_prompt)
@@ -1325,7 +1347,9 @@ async def _run_deliberation(room_id: str, query: str, registry: ModelRegistry, u
 
         # ── Check agreement ──
         agreement = _critic_agrees(critic_out) if critic_out else False
-        disagreements = _extract_disagreements(critic_out) if critic_out else []
+        sections = _extract_sections(critic_out) if critic_out else {"agreements": [], "disagreements": [], "gaps": []}
+        agreements = sections["agreements"]
+        disagreements = sections["disagreements"] + sections["gaps"]
         previous_disagreements = disagreements
 
         # ── Panel review (if configured) ──
@@ -1367,19 +1391,18 @@ async def _run_deliberation(room_id: str, query: str, registry: ModelRegistry, u
             overall = agreement
 
         if overall:
-            await _emit_system_msg(
-                room_id,
-                f"**Consensus reached in round {round_idx}.** All parties agree."
-            )
+            verdict = f"**Consensus reached in round {round_idx}.**"
+            if agreements:
+                verdict += "\n\nSettled:\n" + "\n".join(f"- {a}" for a in agreements[:5])
+            await _emit_system_msg(room_id, verdict)
             break
-        elif disagreements:
-            summary = "\n".join(f"- {d}" for d in disagreements[:5])
-            await _emit_system_msg(
-                room_id,
-                f"Round {round_idx} — **no consensus yet**. Disagreements:\n{summary}"
-            )
         else:
-            await _emit_system_msg(room_id, f"Round {round_idx} — continuing deliberation...")
+            verdict = f"Round {round_idx} — **no consensus yet**."
+            if agreements:
+                verdict += "\n\nSettled:\n" + "\n".join(f"- {a}" for a in agreements[:5])
+            if disagreements:
+                verdict += "\n\nOpen:\n" + "\n".join(f"- {d}" for d in disagreements[:5])
+            await _emit_system_msg(room_id, verdict)
 
         # Brief pause to let user inject feedback before next round
         try:

@@ -14,6 +14,7 @@ from conclave.server import (
     ChatRoom,
     _critic_agrees,
     _extract_disagreements,
+    _extract_sections,
     _emit_chat_msg,
     _emit_system_msg,
     chat_room,
@@ -43,8 +44,8 @@ class TestCriticAgrees:
         assert _critic_agrees("") is False
 
 
-class TestExtractDisagreements:
-    def test_basic(self):
+class TestExtractSections:
+    def test_disagreements(self):
         text = (
             "Disagreements:\n"
             "- Missing error handling\n"
@@ -52,8 +53,26 @@ class TestExtractDisagreements:
             "Verdict:\n"
             "DISAGREE"
         )
-        items = _extract_disagreements(text)
-        assert items == ["Missing error handling", "No timeout logic"]
+        s = _extract_sections(text)
+        assert s["disagreements"] == ["Missing error handling", "No timeout logic"]
+        assert s["agreements"] == []
+
+    def test_agreements_and_disagreements(self):
+        text = (
+            "Agreements:\n"
+            "- Good overall structure\n"
+            "- Correct use of async\n"
+            "Disagreements:\n"
+            "- Missing error handling\n"
+            "Gaps:\n"
+            "- No edge case coverage\n"
+            "Verdict:\n"
+            "DISAGREE"
+        )
+        s = _extract_sections(text)
+        assert s["agreements"] == ["Good overall structure", "Correct use of async"]
+        assert s["disagreements"] == ["Missing error handling"]
+        assert s["gaps"] == ["No edge case coverage"]
 
     def test_gaps_section(self):
         text = (
@@ -70,8 +89,21 @@ class TestExtractDisagreements:
         items = _extract_disagreements(lines)
         assert len(items) <= 8
 
-    def test_no_disagreements(self):
-        assert _extract_disagreements("Everything looks good. AGREE") == []
+    def test_no_sections(self):
+        s = _extract_sections("Everything looks good. AGREE")
+        assert s["agreements"] == []
+        assert s["disagreements"] == []
+
+    def test_extract_disagreements_combines_gaps(self):
+        text = (
+            "Disagreements:\n"
+            "- Point A\n"
+            "Gaps:\n"
+            "- Point B\n"
+            "Verdict:\nDISAGREE"
+        )
+        items = _extract_disagreements(text)
+        assert items == ["Point A", "Point B"]
 
 
 # ── ChatRoom tests ──
