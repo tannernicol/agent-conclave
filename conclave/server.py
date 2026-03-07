@@ -1008,6 +1008,216 @@ async def prompts_run_api(prompt_id: str, background: BackgroundTasks, request: 
     return {"ok": True, "run_id": run_id, "prompt": prompt}
 
 
+## ── Chat Room ──────────────────────────────────────────────
+
+import uuid as _uuid
+
+_CHAT_MAX_MESSAGE_LEN = 10000
+_CHAT_MAX_ROOMS = 50
+_CHAT_MIN_INTERVAL_SEC = 1.0
+_CHAT_ROOM_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,32}$')
+
+
+class ChatRoom:
+    """Manages a multi-agent chat room with conversation history."""
+
+    def __init__(self):
+        self.connections: Dict[str, Set[WebSocket]] = {}
+        self.history: Dict[str, list] = {}
+        self.max_history = 200
+        self._last_msg_time: Dict[WebSocket, float] = {}
+
+    async def connect(self, websocket: WebSocket, room_id: str):
+        await websocket.accept()
+        self.connections.setdefault(room_id, set()).add(websocket)
+        try:
+            await websocket.send_json({
+                "type": "status",
+                "agents": {aid: "online" for aid in ("claude", "codex", "gemini")},
+            })
+            if room_id in self.history and self.history[room_id]:
+                await websocket.send_json({
+                    "type": "history",
+                    "messages": self.history[room_id][-50:],
+                })
+        except Exception:
+            pass
+
+    def disconnect(self, websocket: WebSocket, room_id: str):
+        self._last_msg_time.pop(websocket, None)
+        if room_id in self.connections:
+            self.connections[room_id].discard(websocket)
+            if not self.connections[room_id]:
+                del self.connections[room_id]
+
+    async def broadcast(self, room_id: str, message: dict, exclude: WebSocket | None = None):
+        conns = self.connections.get(room_id)
+        if not conns:
+            return
+        dead = set()
+        for conn in list(conns):
+            if conn is exclude:
+                continue
+            try:
+                await conn.send_json(message)
+            except Exception:
+                dead.add(conn)
+        conns -= dead
+
+    def check_rate(self, websocket: WebSocket) -> bool:
+        now = time.time()
+        last = self._last_msg_time.get(websocket, 0)
+        if now - last < _CHAT_MIN_INTERVAL_SEC:
+            return False
+        self._last_msg_time[websocket] = now
+        return True
+
+    def add_message(self, room_id: str, msg: dict):
+        self.history.setdefault(room_id, []).append(msg)
+        if len(self.history[room_id]) > self.max_history:
+            self.history[room_id] = self.history[room_id][-self.max_history:]
+
+    def get_context(self, room_id: str, limit: int = 20) -> list:
+        return (self.history.get(room_id) or [])[-limit:]
+
+
+chat_room = ChatRoom()
+
+CHAT_AGENT_MODELS = {
+    "claude": "cli:claude",
+    "codex": "cli:codex",
+    "gemini": "cli:gemini",
+}
+
+
+def _build_chat_prompt(history: list, user_msg: str, agent_name: str) -> str:
+    lines = []
+    lines.append(f"You are {agent_name}, an AI assistant in a group chat with other AI agents (claude, codex, gemini) and a human user.")
+    lines.append("Keep responses conversational and concise. You can reference or disagree with other agents.")
+    lines.append("Use @name to mention others. Use markdown for code blocks and formatting.")
+    lines.append("")
+    lines.append("Recent conversation:")
+    for msg in history[-15:]:
+        sender = msg.get("sender", "user")
+        content = msg.get("content", "")
+        lines.append(f"[{sender}]: {content}")
+    lines.append("")
+    lines.append(f"[user]: {user_msg}")
+    lines.append("")
+    lines.append(f"Respond as {agent_name}:")
+    return "\n".join(lines)
+
+
+async def _call_agent(agent_name: str, card: dict, prompt: str) -> str:
+    from conclave.models.cli import CliClient
+    client = CliClient(max_retries=1)
+    command = list(card.get("command", []))
+    if not command:
+        return f"*No command configured for {agent_name}*"
+    result = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: client.run(
+            command, prompt,
+            prompt_mode=card.get("prompt_mode", "arg"),
+            stdin_flag=card.get("stdin_flag"),
+            timeout_seconds=card.get("timeout_seconds", 120),
+            env=card.get("env"),
+        ),
+    )
+    if result.ok:
+        return result.text
+    return "*Error: model returned exit code*"
+
+
+@app.get("/chat")
+async def chat_page(request: Request):
+    return TEMPLATES.TemplateResponse("chat.html", {"request": request})
+
+
+@app.websocket("/ws/chat/{room_id}")
+async def chat_websocket(websocket: WebSocket, room_id: str):
+    if not _CHAT_ROOM_ID_RE.match(room_id):
+        await websocket.close(code=1008)
+        return
+    if room_id not in chat_room.connections and len(chat_room.connections) >= _CHAT_MAX_ROOMS:
+        await websocket.close(code=1008)
+        return
+
+    await chat_room.connect(websocket, room_id)
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+
+            if data.get("type") != "message":
+                continue
+
+            content = (data.get("content") or "").strip()
+            if not content or len(content) > _CHAT_MAX_MESSAGE_LEN:
+                continue
+
+            if not chat_room.check_rate(websocket):
+                continue
+
+            mentions = [m for m in (data.get("mentions") or []) if m in CHAT_AGENT_MODELS]
+            if not mentions:
+                mentions = list(CHAT_AGENT_MODELS.keys())
+
+            user_msg = {
+                "id": f"msg-{_uuid.uuid4().hex[:12]}",
+                "sender": "user",
+                "content": content,
+                "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "mentions": mentions,
+            }
+            chat_room.add_message(room_id, user_msg)
+            # Broadcast user message to other clients (sender already added it locally)
+            await chat_room.broadcast(room_id, {"type": "message", **user_msg}, exclude=websocket)
+
+            history = chat_room.get_context(room_id)
+            registry: ModelRegistry = websocket.app.state.registry
+
+            for agent_name in mentions:
+                model_id = CHAT_AGENT_MODELS.get(agent_name)
+                if not model_id:
+                    continue
+                card = registry.get_model(model_id)
+                if not card:
+                    continue
+
+                await chat_room.broadcast(room_id, {"type": "typing", "agent": agent_name})
+
+                prompt = _build_chat_prompt(history, content, agent_name)
+                try:
+                    response_text = await _call_agent(agent_name, card, prompt)
+                except Exception:
+                    response_text = f"*{agent_name} is unavailable right now.*"
+
+                quoting = {"sender": "user", "content": content[:200]}
+
+                agent_msg = {
+                    "id": f"msg-{_uuid.uuid4().hex[:12]}",
+                    "sender": agent_name,
+                    "content": response_text,
+                    "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "quoting": quoting,
+                }
+                chat_room.add_message(room_id, agent_msg)
+
+                await chat_room.broadcast(room_id, {"type": "typing_stop", "agent": agent_name})
+                await chat_room.broadcast(room_id, {"type": "message", **agent_msg})
+
+                history = chat_room.get_context(room_id)
+
+    except WebSocketDisconnect:
+        chat_room.disconnect(websocket, room_id)
+    except Exception:
+        chat_room.disconnect(websocket, room_id)
+
+
 def main():
     import uvicorn
     config = get_config()
