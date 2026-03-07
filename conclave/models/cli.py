@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 import subprocess
+import signal
 import time
 import os
 import logging
@@ -123,28 +124,40 @@ class CliClient:
 
         start = time.perf_counter()
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=input_data,
+                stdin=subprocess.PIPE if input_data else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
-                timeout=timeout_seconds,
                 cwd=cwd,
                 env=run_env,
+                start_new_session=True,
             )
+            try:
+                stdout, stderr = proc.communicate(
+                    input=input_data, timeout=timeout_seconds
+                )
+            except subprocess.TimeoutExpired:
+                # Kill the entire process group to clean up children
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait(timeout=5)
+                duration = (time.perf_counter() - start) * 1000
+                return CliResult(text="", duration_ms=duration, ok=False, error="timeout")
+
             duration = (time.perf_counter() - start) * 1000
-            ok = result.returncode == 0
-            text = (result.stdout or "").strip()
+            ok = proc.returncode == 0
+            text = (stdout or "").strip()
             return CliResult(
                 text=text,
                 duration_ms=duration,
                 ok=ok,
-                error=None if ok else f"exit {result.returncode}",
-                stderr=(result.stderr or "").strip() or None,
+                error=None if ok else f"exit {proc.returncode}",
+                stderr=(stderr or "").strip() or None,
             )
-        except subprocess.TimeoutExpired:
-            duration = (time.perf_counter() - start) * 1000
-            return CliResult(text="", duration_ms=duration, ok=False, error="timeout")
         except Exception as exc:
             duration = (time.perf_counter() - start) * 1000
             return CliResult(text="", duration_ms=duration, ok=False, error=str(exc))

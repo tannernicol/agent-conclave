@@ -1136,7 +1136,7 @@ def _critic_agrees(text: str) -> bool:
 async def _call_cli_model(card: dict, prompt: str) -> str:
     """Call a CLI model asynchronously and return the response text."""
     from conclave.models.cli import CliClient
-    client = CliClient(max_retries=1)
+    client = CliClient(max_retries=0)
     command = list(card.get("command", []))
     if not command:
         logger.warning("CLI model has no command configured")
@@ -1154,9 +1154,9 @@ async def _call_cli_model(card: dict, prompt: str) -> str:
     )
     if not result.ok:
         logger.warning(f"CLI model failed: {result.error} stderr={result.stderr}")
-    else:
-        logger.info(f"CLI model responded: {len(result.text)} chars in {result.duration_ms:.0f}ms")
-    return result.text if result.ok else ""
+        return ""
+    logger.info(f"CLI model responded: {len(result.text)} chars in {result.duration_ms:.0f}ms")
+    return result.text
 
 
 async def _emit_chat_msg(room_id: str, sender: str, content: str, role: str | None = None, quoting: dict | None = None):
@@ -1459,8 +1459,34 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
                 except asyncio.QueueEmpty:
                     break
 
+            async def _guarded_deliberation(rid, query, reg, q):
+                """Wrap deliberation with error handling and overall timeout."""
+                try:
+                    run_timeout = int(app.state.config.raw.get("pipeline", {}).get("run_timeout_seconds", 900))
+                    await asyncio.wait_for(
+                        _run_deliberation(rid, query, reg, q),
+                        timeout=run_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    await _emit_system_msg(rid, "Deliberation timed out.")
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logger.exception("Deliberation failed")
+                    try:
+                        await _emit_system_msg(rid, f"Deliberation error: {type(exc).__name__}")
+                    except Exception:
+                        pass
+                finally:
+                    # Clear any stuck typing indicators
+                    for agent_name in ("claude", "codex", "gemini"):
+                        try:
+                            await chat_room.broadcast(rid, {"type": "typing_stop", "agent": agent_name})
+                        except Exception:
+                            pass
+
             deliberation_task = asyncio.create_task(
-                _run_deliberation(room_id, content, registry, user_input_queue)
+                _guarded_deliberation(room_id, content, registry, user_input_queue)
             )
 
     except WebSocketDisconnect:
