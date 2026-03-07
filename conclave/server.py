@@ -391,6 +391,11 @@ def _write_prompt_input(
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    return TEMPLATES.TemplateResponse("chat.html", {"request": request})
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
     return TEMPLATES.TemplateResponse(request, "index.html")
 
 
