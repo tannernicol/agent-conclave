@@ -177,15 +177,13 @@ models:
       command:
         - codex
         - exec
-        - --skip-git-repo-check
         - --sandbox
         - read-only
         - -c
         - 'model_reasoning_effort="medium"'
         - -c
         - 'approval_policy="never"'
-      prompt_mode: stdin
-      stdin_flag: "-"
+      prompt_mode: arg
       timeout_seconds: 300
       env:
         NO_COLOR: "1"
@@ -214,7 +212,7 @@ models:
       kind: external
       model_label: gemini (cli)
       command:
-        - gemini-cli
+        - gemini
       prompt_mode: arg
       timeout_seconds: 180
       env:

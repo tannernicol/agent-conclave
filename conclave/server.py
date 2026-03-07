@@ -14,6 +14,9 @@ import re
 import json
 import hashlib
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 from conclave.config import get_config
 from conclave.pipeline import ConclavePipeline
@@ -1136,7 +1139,9 @@ async def _call_cli_model(card: dict, prompt: str) -> str:
     client = CliClient(max_retries=1)
     command = list(card.get("command", []))
     if not command:
+        logger.warning("CLI model has no command configured")
         return ""
+    logger.info(f"Calling CLI model: {command[0]} (prompt_mode={card.get('prompt_mode', 'arg')})")
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: client.run(
@@ -1147,6 +1152,10 @@ async def _call_cli_model(card: dict, prompt: str) -> str:
             env=card.get("env"),
         ),
     )
+    if not result.ok:
+        logger.warning(f"CLI model failed: {result.error} stderr={result.stderr}")
+    else:
+        logger.info(f"CLI model responded: {len(result.text)} chars in {result.duration_ms:.0f}ms")
     return result.text if result.ok else ""
 
 

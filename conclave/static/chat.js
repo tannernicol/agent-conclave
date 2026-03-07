@@ -13,6 +13,7 @@ const MAX_CLIENT_MESSAGES = 500;
 // ── State ──
 let ws = null;
 let messages = [];
+let messageIds = new Set();
 let agentStatus = {};
 let reconnectTimer = null;
 let reconnectDelay = 1000;
@@ -94,7 +95,11 @@ function handleWsMessage(data) {
     case 'history':
       if (Array.isArray(data.messages)) {
         for (const msg of data.messages) {
-          addMessage(msg, false);
+          if (msg.sender === 'system') {
+            addSystemMessage(msg.content || '');
+          } else {
+            addMessage(msg, false);
+          }
         }
         scrollToBottom();
       }
@@ -227,6 +232,9 @@ function sendMessage() {
 
 // ── Message rendering ──
 function addMessage(msg, scroll = true) {
+  // Deduplicate by server ID
+  if (msg.id && messageIds.has(msg.id)) return;
+  if (msg.id) messageIds.add(msg.id);
   messages.push(msg);
   // Trim client-side message history
   if (messages.length > MAX_CLIENT_MESSAGES) {
