@@ -584,6 +584,35 @@ body {
   font-size: 10px;
 }
 
+/* ── Role badges ── */
+.role-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.role-badge.role-reasoner {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.role-badge.role-critic {
+  background: rgba(232, 132, 92, 0.15);
+  color: #e8845c;
+  border: 1px solid rgba(232, 132, 92, 0.3);
+}
+
+.role-badge.role-panel {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
 /* ── System messages ── */
 .msg-system {
   text-align: center;
@@ -596,8 +625,24 @@ body {
   display: inline-block;
   background: var(--ui-surface-2);
   border: 1px solid var(--ui-border);
-  border-radius: 999px;
-  padding: 3px 12px;
+  border-radius: 8px;
+  padding: 6px 16px;
+  text-align: left;
+  max-width: 600px;
+}
+
+.msg-system .system-pill p {
+  margin: 2px 0;
+}
+
+.msg-system .system-pill strong {
+  color: var(--ui-text);
+}
+
+.msg-system .system-pill ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  text-align: left;
 }
 
 /* ── Bold / italic ── */

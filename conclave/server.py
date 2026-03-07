@@ -1094,31 +1094,49 @@ CHAT_AGENT_MODELS = {
     "gemini": "cli:gemini",
 }
 
+# Role display names
+_ROLE_LABELS = {
+    "reasoner": "Reasoner",
+    "critic": "Critic",
+    "panel": "Panel Reviewer",
+}
 
-def _build_chat_prompt(history: list, user_msg: str, agent_name: str) -> str:
-    lines = []
-    lines.append(f"You are {agent_name}, an AI assistant in a group chat with other AI agents (claude, codex, gemini) and a human user.")
-    lines.append("Keep responses conversational and concise. You can reference or disagree with other agents.")
-    lines.append("Use @name to mention others. Use markdown for code blocks and formatting.")
-    lines.append("")
-    lines.append("Recent conversation:")
-    for msg in history[-15:]:
-        sender = msg.get("sender", "user")
-        content = msg.get("content", "")
-        lines.append(f"[{sender}]: {content}")
-    lines.append("")
-    lines.append(f"[user]: {user_msg}")
-    lines.append("")
-    lines.append(f"Respond as {agent_name}:")
-    return "\n".join(lines)
+_AGREE_PATTERNS = re.compile(r'\bAGREE\b', re.IGNORECASE)
+_DISAGREE_PATTERNS = re.compile(r'\bDISAGREE\b', re.IGNORECASE)
 
 
-async def _call_agent(agent_name: str, card: dict, prompt: str) -> str:
+def _extract_disagreements(text: str) -> list[str]:
+    """Extract disagreement bullet points from critic output."""
+    items = []
+    in_section = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        lower = stripped.lower()
+        if lower.startswith("disagreement") or lower.startswith("gap"):
+            in_section = True
+            continue
+        if lower.startswith("verdict"):
+            in_section = False
+            continue
+        if in_section and stripped.startswith("- "):
+            items.append(stripped[2:].strip())
+    return items[:8]
+
+
+def _critic_agrees(text: str) -> bool:
+    """Check if critic text indicates agreement."""
+    if _AGREE_PATTERNS.search(text) and not _DISAGREE_PATTERNS.search(text):
+        return True
+    return False
+
+
+async def _call_cli_model(card: dict, prompt: str) -> str:
+    """Call a CLI model asynchronously and return the response text."""
     from conclave.models.cli import CliClient
     client = CliClient(max_retries=1)
     command = list(card.get("command", []))
     if not command:
-        return f"*No command configured for {agent_name}*"
+        return ""
     result = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: client.run(
@@ -1129,9 +1147,248 @@ async def _call_agent(agent_name: str, card: dict, prompt: str) -> str:
             env=card.get("env"),
         ),
     )
-    if result.ok:
-        return result.text
-    return "*Error: model returned exit code*"
+    return result.text if result.ok else ""
+
+
+async def _emit_chat_msg(room_id: str, sender: str, content: str, role: str | None = None, quoting: dict | None = None):
+    """Create and broadcast a chat message from an agent."""
+    label = sender
+    if role:
+        label = f"{sender} ({_ROLE_LABELS.get(role, role)})"
+    msg = {
+        "id": f"msg-{_uuid.uuid4().hex[:12]}",
+        "sender": sender,
+        "content": content,
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "role": role,
+    }
+    if quoting:
+        msg["quoting"] = quoting
+    chat_room.add_message(room_id, msg)
+    await chat_room.broadcast(room_id, {"type": "message", **msg})
+    return msg
+
+
+async def _emit_system_msg(room_id: str, content: str):
+    """Broadcast a system status message."""
+    msg = {
+        "id": f"msg-{_uuid.uuid4().hex[:12]}",
+        "sender": "system",
+        "content": content,
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    chat_room.add_message(room_id, msg)
+    await chat_room.broadcast(room_id, {"type": "system", "content": content})
+
+
+async def _run_deliberation(room_id: str, query: str, registry: ModelRegistry, user_input_queue: asyncio.Queue):
+    """Run the full deliberation loop, broadcasting each step as chat messages.
+
+    The user can inject messages mid-deliberation via user_input_queue.
+    """
+    config_raw = app.state.config.raw
+    delib_cfg = config_raw.get("deliberation", {}) or {}
+    max_rounds = int(delib_cfg.get("max_rounds", 5))
+
+    # Assign roles from config or defaults
+    planner_cfg = config_raw.get("planner", {}) or {}
+    role_overrides = planner_cfg.get("role_overrides", {}) or {}
+
+    reasoner_id = role_overrides.get("reasoner", "cli:codex")
+    critic_id = role_overrides.get("critic", "cli:claude")
+    panel_ids = list(delib_cfg.get("panel", {}).get("model_ids", []))
+
+    # Map model IDs back to agent names
+    id_to_name = {v: k for k, v in CHAT_AGENT_MODELS.items()}
+
+    reasoner_name = id_to_name.get(reasoner_id, "codex")
+    critic_name = id_to_name.get(critic_id, "claude")
+
+    reasoner_card = registry.get_model(reasoner_id)
+    critic_card = registry.get_model(critic_id)
+
+    if not reasoner_card or not critic_card:
+        await _emit_system_msg(room_id, "Could not find required models. Check config.")
+        return
+
+    # Announce roles
+    panel_names = [id_to_name.get(pid, pid.split(":")[-1]) for pid in panel_ids if registry.get_model(pid)]
+    role_msg = f"**Roles assigned for this question:**\n"
+    role_msg += f"- **Reasoner**: @{reasoner_name}\n"
+    role_msg += f"- **Critic**: @{critic_name}\n"
+    if panel_names:
+        role_msg += f"- **Panel**: {', '.join('@' + n for n in panel_names)}\n"
+    role_msg += f"- **Max rounds**: {max_rounds}\n"
+    role_msg += f"\nStarting deliberation..."
+    await _emit_system_msg(room_id, role_msg)
+
+    reasoner_out = ""
+    critic_out = ""
+    previous_disagreements: list[str] = []
+    agreement = False
+
+    for round_idx in range(1, max_rounds + 1):
+        await _emit_system_msg(room_id, f"**Round {round_idx}/{max_rounds}**")
+
+        # Check for user input injected mid-deliberation
+        user_injection = None
+        try:
+            user_injection = user_input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
+        # ── Reasoner phase ──
+        await chat_room.broadcast(room_id, {"type": "typing", "agent": reasoner_name})
+
+        if round_idx == 1:
+            reasoner_prompt = (
+                f"You are the reasoner in a multi-model deliberation. "
+                f"Provide a careful analysis and propose a decision.\n"
+                f"Be specific and prescriptive. Negotiate toward consensus.\n\n"
+                f"Question: {query}\n"
+            )
+            if user_injection:
+                reasoner_prompt += f"\nAdditional context from user: {user_injection}\n"
+        else:
+            reasoner_prompt = (
+                f"You are the reasoner. Revise your draft to address the critic's feedback.\n\n"
+                f"Question: {query}\n\n"
+                f"Your previous draft:\n{reasoner_out[:3000]}\n\n"
+                f"Critic feedback:\n{critic_out[:3000]}\n"
+            )
+            if previous_disagreements:
+                reasoner_prompt += "\nUnresolved disagreements (address each):\n"
+                for d in previous_disagreements[:6]:
+                    reasoner_prompt += f"- {d}\n"
+            if user_injection:
+                reasoner_prompt += f"\nUser feedback: {user_injection}\n"
+            reasoner_prompt += (
+                "\nInclude a 'Resolution log' listing each prior disagreement as RESOLVED or ACCEPTED.\n"
+                "If all issues are minor, state that clearly.\n"
+            )
+
+        try:
+            reasoner_out = await _call_cli_model(reasoner_card, reasoner_prompt)
+        except Exception:
+            reasoner_out = ""
+
+        await chat_room.broadcast(room_id, {"type": "typing_stop", "agent": reasoner_name})
+
+        if not reasoner_out:
+            await _emit_chat_msg(room_id, reasoner_name, f"*{reasoner_name} failed to respond this round.*", role="reasoner")
+        else:
+            await _emit_chat_msg(
+                room_id, reasoner_name, reasoner_out, role="reasoner",
+                quoting={"sender": "user", "content": query[:200]},
+            )
+
+        # ── Critic phase ──
+        await chat_room.broadcast(room_id, {"type": "typing", "agent": critic_name})
+
+        critic_prompt = (
+            f"You are the critic. Challenge the reasoning, list disagreements, and suggest fixes.\n"
+            f"Negotiate toward consensus. If remaining issues are minor, respond with AGREE.\n"
+            f"List at most 3 disagreements; consolidate overlapping items.\n"
+            f"Return sections:\nDisagreements:\n- ...\nGaps:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
+            f"Question: {query}\n\n"
+            f"Reasoner draft:\n{reasoner_out[:3000]}\n"
+        )
+        if previous_disagreements:
+            critic_prompt += "\nPrevious disagreements (only list if still unresolved):\n"
+            for d in previous_disagreements[:6]:
+                critic_prompt += f"- {d}\n"
+            critic_prompt += "\nIf all prior disagreements are resolved, respond with AGREE.\n"
+
+        try:
+            critic_out = await _call_cli_model(critic_card, critic_prompt)
+        except Exception:
+            critic_out = ""
+
+        await chat_room.broadcast(room_id, {"type": "typing_stop", "agent": critic_name})
+
+        if not critic_out:
+            await _emit_chat_msg(room_id, critic_name, f"*{critic_name} failed to respond this round.*", role="critic")
+        else:
+            await _emit_chat_msg(
+                room_id, critic_name, critic_out, role="critic",
+                quoting={"sender": reasoner_name, "content": reasoner_out[:200]},
+            )
+
+        # ── Check agreement ──
+        agreement = _critic_agrees(critic_out) if critic_out else False
+        disagreements = _extract_disagreements(critic_out) if critic_out else []
+        previous_disagreements = disagreements
+
+        # ── Panel review (if configured) ──
+        panel_votes = []
+        for panel_model_id in panel_ids:
+            panel_card = registry.get_model(panel_model_id)
+            if not panel_card:
+                continue
+            panel_agent = id_to_name.get(panel_model_id, panel_model_id.split(":")[-1])
+            await chat_room.broadcast(room_id, {"type": "typing", "agent": panel_agent})
+
+            panel_prompt = (
+                f"You are a panel reviewer. Read the reasoner's draft and critic's feedback.\n"
+                f"Do you agree with the reasoner's draft? Respond with AGREE or DISAGREE and brief reasoning.\n\n"
+                f"Question: {query}\n\n"
+                f"Reasoner draft:\n{reasoner_out[:2000]}\n\n"
+                f"Critic feedback:\n{critic_out[:2000]}\n"
+            )
+
+            try:
+                panel_out = await _call_cli_model(panel_card, panel_prompt)
+            except Exception:
+                panel_out = ""
+
+            await chat_room.broadcast(room_id, {"type": "typing_stop", "agent": panel_agent})
+
+            if panel_out:
+                panel_agrees = _critic_agrees(panel_out)
+                panel_votes.append(panel_agrees)
+                await _emit_chat_msg(room_id, panel_agent, panel_out, role="panel")
+
+        # ── Round verdict ──
+        if panel_votes:
+            agree_count = sum(1 for v in panel_votes if v)
+            total = len(panel_votes)
+            panel_agreement = agree_count / total >= 0.6 if total > 0 else False
+            overall = agreement and panel_agreement
+        else:
+            overall = agreement
+
+        if overall:
+            await _emit_system_msg(
+                room_id,
+                f"**Consensus reached in round {round_idx}.** All parties agree."
+            )
+            break
+        elif disagreements:
+            summary = "\n".join(f"- {d}" for d in disagreements[:5])
+            await _emit_system_msg(
+                room_id,
+                f"Round {round_idx} — **no consensus yet**. Disagreements:\n{summary}"
+            )
+        else:
+            await _emit_system_msg(room_id, f"Round {round_idx} — continuing deliberation...")
+
+        # Brief pause to let user inject feedback before next round
+        try:
+            user_injection = await asyncio.wait_for(user_input_queue.get(), timeout=3.0)
+            if user_injection:
+                await _emit_system_msg(room_id, f"User feedback received, incorporating into next round.")
+        except asyncio.TimeoutError:
+            pass
+
+    if not agreement:
+        await _emit_system_msg(
+            room_id,
+            f"**Deliberation ended after {max_rounds} rounds without full consensus.** "
+            f"The reasoner's latest draft is the best-effort answer."
+        )
+
+    # Final summary
+    await _emit_system_msg(room_id, "Deliberation complete.")
 
 
 @app.get("/chat")
@@ -1149,6 +1406,9 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
         return
 
     await chat_room.connect(websocket, room_id)
+    user_input_queue: asyncio.Queue = asyncio.Queue()
+    deliberation_task: asyncio.Task | None = None
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -1167,59 +1427,40 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
             if not chat_room.check_rate(websocket):
                 continue
 
-            mentions = [m for m in (data.get("mentions") or []) if m in CHAT_AGENT_MODELS]
-            if not mentions:
-                mentions = list(CHAT_AGENT_MODELS.keys())
-
             user_msg = {
                 "id": f"msg-{_uuid.uuid4().hex[:12]}",
                 "sender": "user",
                 "content": content,
                 "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "mentions": mentions,
             }
             chat_room.add_message(room_id, user_msg)
-            # Broadcast user message to other clients (sender already added it locally)
             await chat_room.broadcast(room_id, {"type": "message", **user_msg}, exclude=websocket)
 
-            history = chat_room.get_context(room_id)
+            # If deliberation is running, inject user feedback into the current round
+            if deliberation_task and not deliberation_task.done():
+                user_input_queue.put_nowait(content)
+                continue
+
+            # Start a new deliberation
             registry: ModelRegistry = websocket.app.state.registry
-
-            for agent_name in mentions:
-                model_id = CHAT_AGENT_MODELS.get(agent_name)
-                if not model_id:
-                    continue
-                card = registry.get_model(model_id)
-                if not card:
-                    continue
-
-                await chat_room.broadcast(room_id, {"type": "typing", "agent": agent_name})
-
-                prompt = _build_chat_prompt(history, content, agent_name)
+            # Drain any stale queue items
+            while not user_input_queue.empty():
                 try:
-                    response_text = await _call_agent(agent_name, card, prompt)
-                except Exception:
-                    response_text = f"*{agent_name} is unavailable right now.*"
+                    user_input_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
-                quoting = {"sender": "user", "content": content[:200]}
-
-                agent_msg = {
-                    "id": f"msg-{_uuid.uuid4().hex[:12]}",
-                    "sender": agent_name,
-                    "content": response_text,
-                    "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    "quoting": quoting,
-                }
-                chat_room.add_message(room_id, agent_msg)
-
-                await chat_room.broadcast(room_id, {"type": "typing_stop", "agent": agent_name})
-                await chat_room.broadcast(room_id, {"type": "message", **agent_msg})
-
-                history = chat_room.get_context(room_id)
+            deliberation_task = asyncio.create_task(
+                _run_deliberation(room_id, content, registry, user_input_queue)
+            )
 
     except WebSocketDisconnect:
+        if deliberation_task and not deliberation_task.done():
+            deliberation_task.cancel()
         chat_room.disconnect(websocket, room_id)
     except Exception:
+        if deliberation_task and not deliberation_task.done():
+            deliberation_task.cancel()
         chat_room.disconnect(websocket, room_id)
 
 

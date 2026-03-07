@@ -99,6 +99,9 @@ function handleWsMessage(data) {
         scrollToBottom();
       }
       break;
+    case 'system':
+      addSystemMessage(data.content || data.message || '');
+      break;
     case 'error':
       addSystemMessage(data.message || 'An error occurred');
       break;
@@ -246,7 +249,7 @@ function addMessage(msg, scroll = true) {
 function addSystemMessage(text) {
   const el = document.createElement('div');
   el.className = 'msg-system';
-  el.innerHTML = `<span class="system-pill">${escapeHtml(text)}</span>`;
+  el.innerHTML = `<div class="system-pill">${renderContent(text)}</div>`;
   messagesEl.appendChild(el);
   scrollToBottom();
 }
@@ -318,12 +321,21 @@ function renderMessage(msg) {
 
   const senderLabel = isUser ? 'User' : (AGENTS[sender]?.label || sender);
 
+  // Role badge (reasoner, critic, panel)
+  let roleBadge = '';
+  if (msg.role) {
+    const roleLabels = { reasoner: 'Reasoner', critic: 'Critic', panel: 'Panel' };
+    const roleLabel = roleLabels[msg.role] || msg.role;
+    roleBadge = `<span class="role-badge role-${escapeHtml(msg.role)}">${escapeHtml(roleLabel)}</span>`;
+  }
+
   el.innerHTML = `
     <div class="msg-avatar">${icon}</div>
     <div class="msg-body">
       ${quoteHtml}
       <div class="msg-header">
         <span class="msg-sender">${escapeHtml(senderLabel)}</span>
+        ${roleBadge}
         <span class="msg-time">${time}</span>
       </div>
       <div class="msg-content">${renderedContent}</div>
