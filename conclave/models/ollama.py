@@ -36,6 +36,7 @@ class OllamaClient:
         system: Optional[str] = None,
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> OllamaResult:
         payload: Dict[str, Any] = {
             "model": model,
@@ -52,7 +53,7 @@ class OllamaClient:
 
         start = time.perf_counter()
         try:
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=timeout_seconds or 120.0) as client:
                 resp = client.post(f"{self.base_url}/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()

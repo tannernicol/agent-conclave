@@ -137,6 +137,15 @@ class ConclavePipeline:
             return None
         return float(self.config.run_timeout_seconds) - (time.time() - self._run_start_time)
 
+    def _effective_timeout_seconds(self, requested_timeout: Optional[int], default_timeout: int) -> int:
+        timeout = int(requested_timeout if requested_timeout is not None else default_timeout)
+        timeout = max(1, timeout)
+        remaining = self._time_remaining()
+        if remaining is None:
+            return timeout
+        available = max(1, int(math.ceil(remaining - 2.0)))
+        return max(1, min(timeout, available))
+
     def _init_token_budget(self, meta: Optional[Dict[str, Any]]) -> None:
         cfg = (self.config.raw.get("planner", {}) or {}).get("self_organize", {}) or {}
         budget_cfg = cfg.get("budget") if isinstance(cfg, dict) else {}
@@ -468,6 +477,7 @@ class ConclavePipeline:
                 return PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
 
             consensus = self._summarize(query, context, deliberation, route, quality)
+            self._check_timeout("summarize")
             output_path, output_artifacts = self._write_output_file(run_id, consensus, context.get("output_type"), context)
             cost_estimate = self._estimate_run_cost()
             previous = self._latest_for_meta(meta)
@@ -2352,11 +2362,18 @@ class ConclavePipeline:
             summary_prompt += f"\nPanel notes:\n{panel_blob}\n"
         if diversity_blob:
             summary_prompt += f"\nDiversity check notes:\n{diversity_blob}\n"
-        summary = self._call_model(summarizer_model, summary_prompt, role="summarizer")
         fallback_used = False
-        if not summary.strip():
-            summary = self._fallback_summary(query, deliberation)
+        fallback_reason = ""
+        try:
+            summary = self._call_model(summarizer_model, summary_prompt, role="summarizer")
+        except (RequiredModelError, TimeoutError) as exc:
+            summary = self._fallback_summary(query, deliberation, note=f"Summarizer fallback used: {exc}")
             fallback_used = True
+            fallback_reason = str(exc)
+        if not summary.strip():
+            summary = self._fallback_summary(query, deliberation, note="Summarizer returned empty output.")
+            fallback_used = True
+            fallback_reason = fallback_reason or "empty_summarizer_output"
         model_conf = self._extract_confidence(summary)
         auto_conf = self._auto_confidence(quality)
         final_conf = self._merge_confidence(model_conf, auto_conf)
@@ -2388,6 +2405,7 @@ class ConclavePipeline:
             "confidence_auto": auto_conf,
             "pope": summary.strip().splitlines()[0] if summary.strip() else "",
             "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
             "insufficient_evidence": False,
             "models_used": models_used,
         }
@@ -2405,9 +2423,10 @@ class ConclavePipeline:
             api_key_env = card.get("api_key_env", "OPENAI_API_KEY")
             api_key = "none" if str(api_key_env).lower() == "none" else (os.environ.get(api_key_env, "") or None)
             base_url = card.get("base_url") or None
+            effective_timeout = self._effective_timeout_seconds(timeout_seconds, int(card.get("timeout_seconds", 120)))
             result = self.openai_compat.generate(
                 prompt_to_send, model=model, temperature=0.2,
-                timeout=timeout_seconds or 120, api_key=api_key, base_url=base_url,
+                timeout=effective_timeout, api_key=api_key, base_url=base_url,
             )
             self._record_model_observation(model_id, result)
             self._consume_tokens(model_id, prompt_to_send, result.text or "")
@@ -2447,7 +2466,8 @@ class ConclavePipeline:
             return result.text
         if model_id.startswith("ollama:"):
             model = model_id.split(":", 1)[1]
-            result = self.ollama.generate(model, prompt_to_send, temperature=0.2)
+            effective_timeout = self._effective_timeout_seconds(timeout_seconds, 120)
+            result = self.ollama.generate(model, prompt_to_send, temperature=0.2, timeout_seconds=effective_timeout)
             self._record_model_observation(model_id, result)
             self._consume_tokens(model_id, prompt_to_send, result.text or "")
             if result.ok:
@@ -2536,7 +2556,7 @@ class ConclavePipeline:
         if not hasattr(self, '_gemini_client'):
             self._gemini_client = GeminiClient()
         model_name = model_id.split(":", 1)[1] if ":" in model_id else "2.5-flash"
-        timeout = timeout_seconds or 120
+        timeout = self._effective_timeout_seconds(timeout_seconds, 120)
         return self._gemini_client.generate(prompt=prompt, model=model_name, timeout=timeout)
 
     def _call_cli_model(self, model_id: str, prompt: str, role: Optional[str] = None, timeout_seconds: Optional[int] = None) -> Any:
@@ -2544,8 +2564,7 @@ class ConclavePipeline:
         command = card.get("command") or []
         prompt_mode = card.get("prompt_mode", "arg")
         stdin_flag = card.get("stdin_flag")
-        if timeout_seconds is None:
-            timeout_seconds = int(card.get("timeout_seconds", 90))
+        timeout_seconds = self._effective_timeout_seconds(timeout_seconds, int(card.get("timeout_seconds", 90)))
         env = card.get("env") or {}
         cwd = card.get("cwd")
         result = self.cli.run(
@@ -3447,31 +3466,43 @@ class ConclavePipeline:
             return "low"
         return "medium"
 
-    def _fallback_summary(self, query: str, deliberation: Dict[str, Any]) -> str:
+    def _fallback_summary(self, query: str, deliberation: Dict[str, Any], note: Optional[str] = None) -> str:
         disagreements = deliberation.get("disagreements", [])
         critic = deliberation.get("critic", "")
         reasoner = deliberation.get("reasoner", "")
         diversity_notes = deliberation.get("diversity") or []
         agreement = bool(deliberation.get("agreement", False))
+        if agreement and reasoner.strip():
+            lines = [reasoner.strip()]
+            if note:
+                lines.extend([
+                    "",
+                    "## Runtime note",
+                    "",
+                    f"- {note}",
+                ])
+            return "\n".join(lines)
         lines = [
-            "**Consensus:**",
+            "## Verdict: Fallback summary based on completed deliberation.",
             "",
-            f"- **Query**: {query}",
+            f"- Query: {query}",
             "",
         ]
         if agreement:
             lines.extend([
-                "**Reasoner Draft:**",
+                "## Reasoner Draft",
+                "",
                 reasoner.strip() or "No reasoner output.",
                 "",
-                "**Critic Disagreements:**",
+                "## Critic Disagreements",
             ])
         else:
             lines.extend([
-                "**Agreed Foundation:**",
+                "## Agreed Foundation",
+                "",
                 reasoner.strip() or "No reasoner output.",
                 "",
-                "**Open Disagreements:**",
+                "## Open Disagreements",
             ])
         if disagreements:
             for item in disagreements[:5]:
@@ -3482,14 +3513,24 @@ class ConclavePipeline:
             lines.append("No critic output.")
         if diversity_notes:
             lines.append("")
-            lines.append("**Diversity Check:**")
+            lines.append("## Diversity Check")
+            lines.append("")
             for item in diversity_notes[:3]:
                 model_id = item.get("model_id") or item.get("model") or "diversity"
                 notes = (item.get("notes") or "").strip()
                 if notes:
                     lines.append(f"- [{model_id}] {notes[:400]}")
+        if note:
+            lines.extend([
+                "",
+                "## Runtime note",
+                "",
+                f"- {note}",
+            ])
         lines.append("")
-        lines.append("**Confidence Level**: Low")
+        lines.append("## Confidence")
+        lines.append("")
+        lines.append("- Low")
         return "\n".join(lines)
 
     def _maybe_run_diversity_check(

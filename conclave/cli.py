@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import threading
 import time
@@ -67,9 +66,10 @@ def _execute_run(
     args: argparse.Namespace,
 ) -> PipelineResult:
     store = pipeline.store
+    if getattr(args, "max_seconds", None):
+        pipeline.config.raw.setdefault("pipeline", {})["run_timeout_seconds"] = int(args.max_seconds)
     run_id = store.create_run(query, meta=meta if meta else None)
     stop_event = threading.Event()
-    timeout_thread = None
     progress_thread = None
     if getattr(args, "progress", False):
         progress_thread = threading.Thread(
@@ -80,25 +80,11 @@ def _execute_run(
         progress_thread.start()
         print(f"[conclave] run_id={run_id}", file=sys.stderr)
 
-    if getattr(args, "max_seconds", None):
-        timeout_seconds = int(args.max_seconds)
-        def _timeout_guard() -> None:
-            if stop_event.wait(timeout_seconds):
-                return
-            try:
-                store.fail_run(run_id, f"run exceeded max_seconds={timeout_seconds}")
-            except Exception:
-                pass
-            print(f"[conclave] run aborted: exceeded max_seconds={timeout_seconds}", file=sys.stderr)
-            os._exit(2)
-        timeout_thread = threading.Thread(target=_timeout_guard, daemon=True)
-        timeout_thread.start()
-
     try:
         result = pipeline.run(query, collections=collections, meta=meta, run_id=run_id)
     except TimeoutError as exc:
-        store.fail_run(run_id, str(exc))
-        consensus = {
+        run = store.get_run(run_id) or {}
+        consensus = run.get("consensus") or {
             "answer": f"### Conclave timed out\n\n{exc}",
             "confidence": "low",
             "confidence_model": "low",
@@ -107,13 +93,14 @@ def _execute_run(
             "fallback_used": True,
             "insufficient_evidence": True,
         }
-        result = PipelineResult(run_id=run_id, consensus=consensus, artifacts={})
+        artifacts = run.get("artifacts") or {}
+        if not run.get("consensus"):
+            store.fail_run(run_id, str(exc))
+        result = PipelineResult(run_id=run_id, consensus=consensus, artifacts=artifacts)
     finally:
         stop_event.set()
         if progress_thread:
             progress_thread.join(timeout=1.0)
-        if timeout_thread:
-            timeout_thread.join(timeout=1.0)
     return result
 
 

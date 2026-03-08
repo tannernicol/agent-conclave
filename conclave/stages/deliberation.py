@@ -6,6 +6,32 @@ import time
 from conclave.domains import get_domain_instructions
 
 
+def _bounded_timeout_seconds(model_timeout: Any, budget: float | None) -> int | None:
+    if budget is not None:
+        return max(1, int(min(float(model_timeout or budget), max(0.0, budget))))
+    if model_timeout:
+        try:
+            return max(1, int(model_timeout))
+        except Exception:
+            return None
+    return None
+
+
+def _effective_min_time_left_seconds(configured_seconds: Any, run_timeout_seconds: Any) -> float:
+    try:
+        configured = float(configured_seconds or 0)
+    except Exception:
+        configured = 0.0
+    try:
+        run_timeout = float(run_timeout_seconds or 0)
+    except Exception:
+        run_timeout = 0.0
+    if configured <= 0 or run_timeout <= 0:
+        return max(0.0, configured)
+    short_run_cap = max(15.0, run_timeout * 0.25)
+    return max(0.0, min(configured, short_run_cap))
+
+
 def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
     plan = route.get("plan", {})
     reasoner_model = plan.get("creator") or plan.get("reasoner") or next(iter(plan.values()), None)
@@ -36,7 +62,10 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
             panel_min_ratio = float(route.get("panel_min_ratio"))
         except Exception:
             pass
-    min_time_left = float(config.get("min_time_left_seconds", 0) or 0)
+    min_time_left = _effective_min_time_left_seconds(
+        config.get("min_time_left_seconds", 0),
+        pipeline.config.run_timeout_seconds,
+    )
     context_blob = pipeline._format_context(context)
     runtime_blob = pipeline._format_runtime_context(route, context)
     instructions = pipeline._user_instructions(context)
@@ -81,14 +110,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
         budget = None
         if remaining is not None:
             budget = max(0.0, remaining - float(min_time_left))
-        per_call_timeout = None
-        if budget is not None:
-            per_call_timeout = int(max(20, min(float(model_timeout or budget), budget))) if budget > 0 else None
-        elif model_timeout:
-            try:
-                per_call_timeout = int(model_timeout)
-            except Exception:
-                per_call_timeout = None
+        per_call_timeout = _bounded_timeout_seconds(model_timeout, budget)
         analysis_prompt = (
             "You are the reasoner. Provide a careful analysis and propose a decision.\n"
             "Be specific and prescriptive. If evidence is weak, proceed with assumptions and mark confidence low.\n"
