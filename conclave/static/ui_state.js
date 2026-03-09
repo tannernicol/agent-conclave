@@ -16,6 +16,7 @@ function buildPhaseState(run) {
   events.forEach((event) => {
     if (event.phase === 'route' && event.status === 'done') done.add('route');
     if (event.phase === 'retrieve' && event.status === 'done') done.add('retrieve');
+    if (event.phase === 'summarize' && event.status === 'done') done.add('summarizer');
     if (event.phase === 'model' && event.role) {
       const roleKey = event.role === 'critic_panel' ? 'critic' : event.role;
       done.add(roleKey);
@@ -156,6 +157,18 @@ function summarizeEvent(event, run, index) {
       return `${roundLabel}: panel reviewing`;
     }
     return `${roundLabel}: continuing negotiation`;
+  }
+  if (phase === 'summarize') {
+    const label = event.model_label || event.model_id || 'summarizer';
+    const duration = typeof event.duration_s === 'number' ? `${event.duration_s.toFixed(1)}s` : '';
+    const summary = (event.summary || '').trim();
+    if (event.status === 'start') {
+      return `Summarizer distilling consensus (${label})`;
+    }
+    if (event.status === 'done') {
+      const fallback = event.fallback_used ? ' • fallback' : '';
+      return `Summarizer complete${duration ? ` • ${duration}` : ''}${fallback}${summary ? ` • ${summary}` : ''}`;
+    }
   }
   if (phase === 'requirements') {
     return event.status === 'ok' ? 'Requirements satisfied' : 'Checking requirements';

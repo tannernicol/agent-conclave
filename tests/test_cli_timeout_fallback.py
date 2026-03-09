@@ -111,3 +111,88 @@ def test_summarize_falls_back_to_reasoner_when_summarizer_fails(tmp_path: Path):
     assert "timeout" in consensus["fallback_reason"]
     assert "Submit it as Medium." in consensus["answer"]
     assert "## Runtime note" in consensus["answer"]
+
+
+def test_summarize_emits_progress_events(tmp_path: Path):
+    pipeline = ConclavePipeline(Config({
+        "data_dir": str(tmp_path),
+        "pipeline": {"run_timeout_seconds": 120},
+    }))
+    run_id = pipeline.store.create_run("question")
+    pipeline._run_id = run_id
+    pipeline._run_start_time = time.time()
+
+    def _fake_call(model_id, prompt, role=None, timeout_seconds=None):
+        assert role == "summarizer"
+        assert timeout_seconds is not None
+        return "## Verdict: Keep the plan — concise and realistic."
+
+    pipeline._call_model = _fake_call  # type: ignore[method-assign]
+    route = {
+        "plan": {"summarizer": "cli:claude"},
+        "plan_details": {"summarizer": {"id": "cli:claude", "label": "Claude"}},
+    }
+    consensus = pipeline._summarize(
+        "question",
+        {},
+        {"agreement": True, "reasoner": "draft", "critic": "", "disagreements": []},
+        route,
+        {"evidence_count": 1, "pdf_ratio": 0.0, "off_domain_ratio": 0.0, "max_signal_score": 1.0},
+    )
+
+    run = pipeline.store.get_run(run_id)
+    assert consensus["answer"].startswith("## Verdict:")
+    assert run is not None
+    summarize_events = [e for e in run["events"] if e.get("phase") == "summarize"]
+    assert [e.get("status") for e in summarize_events] == ["start", "done"]
+
+
+def test_run_finalizes_after_summarizer_with_progress_events(tmp_path: Path, monkeypatch):
+    pipeline = ConclavePipeline(Config({
+        "data_dir": str(tmp_path),
+        "pipeline": {"run_timeout_seconds": 120},
+        "calibration": {"enabled": False},
+    }))
+
+    monkeypatch.setattr(pipeline, "preflight_check", lambda: {"ok": True, "warnings": [], "services": {}})
+    monkeypatch.setattr(pipeline, "_check_required_models", lambda: {"ok": True, "required": [], "available": [], "missing": [], "failed": []})
+    monkeypatch.setattr(pipeline, "_route_query", lambda *args, **kwargs: {
+        "domain": "general",
+        "collections": [],
+        "plan": {"reasoner": "cli:codex", "critic": "cli:claude", "summarizer": "cli:claude"},
+        "panel_models": [],
+    })
+    monkeypatch.setattr("conclave.pipeline.retrieve_context", lambda *args, **kwargs: {"output_type": None, "evidence": [], "rag": [], "file_index": [], "stats": {"evidence_count": 0}})
+
+    def _fake_deliberate(*args, **kwargs):
+        pipeline._run_models_used = {"cli:codex", "cli:claude"}
+        return {
+            "agreement": True,
+            "reasoner": "Reasoner draft",
+            "critic": "## Verdict: AGREE\nReason: good enough",
+            "disagreements": [],
+            "rounds": [{"disagreements": []}],
+        }
+
+    monkeypatch.setattr("conclave.pipeline.deliberate", _fake_deliberate)
+    monkeypatch.setattr(pipeline, "_write_output_file", lambda *args, **kwargs: (None, []))
+    monkeypatch.setattr(pipeline, "_estimate_run_cost", lambda: {})
+    monkeypatch.setattr(pipeline, "_latest_for_meta", lambda meta: None)
+    monkeypatch.setattr(pipeline, "_log_to_memory", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_post_to_agent_sync", lambda *args, **kwargs: None)
+
+    def _fake_call(model_id, prompt, role=None, timeout_seconds=None):
+        if role == "summarizer":
+            return "## Verdict: Finalized cleanly — summarizer ran and the run closed."
+        raise AssertionError(f"unexpected role {role}")
+
+    monkeypatch.setattr(pipeline, "_call_model", _fake_call)
+
+    result = pipeline.run("question")
+
+    run = pipeline.store.get_run(result.run_id)
+    assert run is not None
+    assert run["status"] == "complete"
+    summarize_events = [e for e in run["events"] if e.get("phase") == "summarize"]
+    assert [e.get("status") for e in summarize_events] == ["start", "done"]
+    assert run["consensus"]["answer"].startswith("## Verdict:")

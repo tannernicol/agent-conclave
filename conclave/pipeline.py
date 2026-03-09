@@ -2210,6 +2210,8 @@ class ConclavePipeline:
         instructions = self._user_instructions(context)
         domain = route.get("domain")
         output_instructions = self._output_instructions(context.get("output_type"))
+        summarizer_model = (route.get("plan") or {}).get("summarizer") or (route.get("plan") or {}).get("reasoner")
+        summarizer_label = self._model_label(summarizer_model) if summarizer_model else None
         evidence_hint = (
             f"Evidence count: {quality.get('evidence_count', 0)}, "
             f"pdf_ratio: {quality.get('pdf_ratio', 0):.2f}, "
@@ -2364,8 +2366,35 @@ class ConclavePipeline:
             summary_prompt += f"\nDiversity check notes:\n{diversity_blob}\n"
         fallback_used = False
         fallback_reason = ""
+        summary_duration = None
+        summarizer_timeout = None
+        if summarizer_model:
+            card = self.registry.get_model(summarizer_model) or {}
+            try:
+                summarizer_timeout = self._effective_timeout_seconds(
+                    None,
+                    int(card.get("timeout_seconds", 90)),
+                )
+            except Exception:
+                summarizer_timeout = None
+        if self._run_id:
+            self.store.append_event(self._run_id, {
+                "phase": "summarize",
+                "status": "start",
+                "role": "summarizer",
+                "model_id": summarizer_model,
+                "model_label": summarizer_label,
+                "timeout_s": summarizer_timeout,
+            })
         try:
-            summary = self._call_model(summarizer_model, summary_prompt, role="summarizer")
+            summary_start = time.perf_counter()
+            summary = self._call_model(
+                summarizer_model,
+                summary_prompt,
+                role="summarizer",
+                timeout_seconds=summarizer_timeout,
+            )
+            summary_duration = time.perf_counter() - summary_start
         except (RequiredModelError, TimeoutError) as exc:
             summary = self._fallback_summary(query, deliberation, note=f"Summarizer fallback used: {exc}")
             fallback_used = True
@@ -2374,6 +2403,17 @@ class ConclavePipeline:
             summary = self._fallback_summary(query, deliberation, note="Summarizer returned empty output.")
             fallback_used = True
             fallback_reason = fallback_reason or "empty_summarizer_output"
+        if self._run_id:
+            self.store.append_event(self._run_id, {
+                "phase": "summarize",
+                "status": "done",
+                "role": "summarizer",
+                "model_id": summarizer_model,
+                "model_label": summarizer_label,
+                "duration_s": round(summary_duration, 2) if summary_duration is not None else None,
+                "fallback_used": fallback_used,
+                "summary": (summary.strip().splitlines()[0] if summary.strip() else ""),
+            })
         model_conf = self._extract_confidence(summary)
         auto_conf = self._auto_confidence(quality)
         final_conf = self._merge_confidence(model_conf, auto_conf)
