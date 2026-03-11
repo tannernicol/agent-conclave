@@ -113,6 +113,30 @@ Each run used a different **perturbation** — a perspective-shift prepended to 
 
 Fast-path: when all roles are pre-assigned, calibration and scoring are skipped entirely — deliberation starts in seconds.
 
+## Multi-Model Code Review
+
+Conclave routes code-review prompts into the `code_review` domain so the
+Reasoner and Critic are primed to cite file paths, flag bugs, and call out edge
+cases. Pipe a diff or patch file into the run, let two different models argue
+over it, and get a single verdict with highlighted risks instead of cherry
+picking answers from multiple chats.
+
+```bash
+git diff HEAD~1 > /tmp/latest.diff
+conclave run \
+  --query "Review this diff for correctness and security" \
+  --input-file /tmp/latest.diff \
+  --collection repo \
+  --progress --max-evidence 6
+```
+
+- The router keeps Reasoner/Critic assignments consistent (e.g., frontier model
+  critiques local model) while the summarizer emits actionable findings.
+- Domain hints force line-number callouts and push both models to reason about
+  architecture, performance, and correctness simultaneously.
+- Optional panel voting/annealing gives you more than one perspective on risky
+  changes when the first pass still disagrees.
+
 ## Key Features
 
 - **Adversarial deliberation** — models argue FOR and AGAINST, not just answer in parallel
