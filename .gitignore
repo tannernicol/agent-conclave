@@ -12,3 +12,11 @@ build/
 htmlcov/
 .DS_Store
 node_modules/
+
+# Local bd state (databases + metadata)
+.beads/beads.db*
+.beads/README.md
+.beads/config.yaml
+.beads/metadata.json
+.beads/export-state/
+.beads/.local_version
