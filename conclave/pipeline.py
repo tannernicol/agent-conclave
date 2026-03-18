@@ -1445,7 +1445,11 @@ class ConclavePipeline:
                 score_val = 0.0
             if score_val < min_score:
                 continue
-            snippet = (item.get("snippet") or item.get("match_line") or "").strip()
+            snippet_raw = item.get("snippet") or item.get("match_line") or ""
+            if isinstance(snippet_raw, list):
+                snippet = " ".join(str(part) for part in snippet_raw if part is not None).strip()
+            else:
+                snippet = str(snippet_raw).strip()
             match_type = str(item.get("match_type", "")).lower()
             if match_type == "filename" and len(snippet) < min_filename_snippet:
                 continue
@@ -3928,7 +3932,11 @@ class ConclavePipeline:
     ) -> Dict[str, Any]:
         path = item.get("path") or item.get("file_path") or item.get("name")
         title = item.get("title") or item.get("name") or (Path(path).name if path else "unknown")
-        snippet = item.get("snippet") or item.get("match_line") or ""
+        snippet_raw = item.get("snippet") or item.get("match_line") or ""
+        if isinstance(snippet_raw, list):
+            snippet = " ".join(str(part) for part in snippet_raw if part is not None)
+        else:
+            snippet = str(snippet_raw)
         match_type = str(item.get("match_type", "")).lower()
         collection = item.get("collection") or item.get("source")
         line = item.get("line")
