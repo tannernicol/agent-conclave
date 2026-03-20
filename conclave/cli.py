@@ -53,6 +53,11 @@ def _build_meta(args: argparse.Namespace, input_path: str | None = None) -> dict
         meta["token_budget_remaining"] = args.token_budget_remaining
     if getattr(args, "token_budget_used", None) is not None:
         meta["token_budget_used"] = args.token_budget_used
+    importance = getattr(args, "importance", None)
+    if importance:
+        meta["importance"] = importance
+    elif getattr(args, "important", False):
+        meta["importance"] = "high"
     if getattr(args, "anneal", False):
         meta["anneal"] = True
     return meta or None
@@ -678,6 +683,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--token-budget-total", type=float, help="Total token budget for the run")
     run.add_argument("--token-budget-remaining", type=float, help="Remaining token budget (for chained runs)")
     run.add_argument("--token-budget-used", type=float, help="Tokens already used (for chained runs)")
+    run.add_argument("--important", action="store_true", help="Treat this as a high-stakes decision and force extra verification")
+    run.add_argument("--importance", choices=["low", "normal", "high"], help="Importance level for deliberation")
     run.add_argument("--anneal", action="store_true", help="Enable simulated annealing (multiple deliberation runs)")
     run.add_argument("--fail-on-insufficient", action="store_true", help="Exit non-zero if evidence quality is insufficient")
     run.add_argument("--no-fail-on-insufficient", action="store_true", help="Never exit non-zero for evidence quality")
@@ -698,6 +705,8 @@ def build_parser() -> argparse.ArgumentParser:
     iterate.add_argument("--token-budget-total", type=float, help="Total token budget per iteration")
     iterate.add_argument("--token-budget-remaining", type=float, help="Remaining token budget (for chained runs)")
     iterate.add_argument("--token-budget-used", type=float, help="Tokens already used (for chained runs)")
+    iterate.add_argument("--important", action="store_true", help="Treat each iteration as high-stakes and force extra verification")
+    iterate.add_argument("--importance", choices=["low", "normal", "high"], help="Importance level for each iteration")
 
     runs = sub.add_parser("runs", help="View past deliberation runs")
     runs_sub = runs.add_subparsers(dest="runs_cmd")

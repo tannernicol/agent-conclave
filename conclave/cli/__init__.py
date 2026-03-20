@@ -11,7 +11,8 @@ if _spec and _spec.loader:
     _spec.loader.exec_module(_module)
     main = _module.main
     build_parser = _module.build_parser
+    _build_meta = _module._build_meta
     _execute_run = _module._execute_run
-    __all__ = ["main", "build_parser", "_execute_run"]
+    __all__ = ["main", "build_parser", "_build_meta", "_execute_run"]
 else:
     __all__ = []

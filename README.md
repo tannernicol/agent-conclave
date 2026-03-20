@@ -18,7 +18,7 @@ You want multiple AI perspectives on an important decision. So you ask Claude. T
 
 ## The Solution
 
-Conclave makes AI agents debate each other so you don't have to. A **Reasoner** builds the case, a **Critic** tears it apart, and they iterate until they converge — or agree to disagree. Like the papal conclave: white smoke when they agree, black smoke when they don't.
+Conclave makes AI agents debate each other so you don't have to. A **Reasoner** builds the case, a **Critic** tears it apart, and they iterate until they converge — or agree to disagree. For important decisions, supplemental panel reviewers can reopen an early "white smoke" verdict and send it back through another round automatically. Like the papal conclave: white smoke when they agree, black smoke when they don't.
 
 **One query in, one verdict out. No more copy-paste consensus.**
 
@@ -107,7 +107,7 @@ Each run used a different **perturbation** — a perspective-shift prepended to 
 3. **Retrieve** — pulls evidence from RAG collections and local file indexes
 4. **Quality gate** — blocks low-confidence runs when evidence is insufficient
 5. **Deliberate** — Reasoner builds the case, Critic tears it apart, repeat until convergence
-6. **Panel vote** *(optional)* — when Reasoner and Critic deadlock, a multi-model panel breaks the tie with weighted voting
+6. **Panel escalation** *(optional)* — supplemental reviewers verify the current draft, can reopen a weak agreement, and feed material objections back into the next round
 7. **Smoke signal** — ☁️ white smoke on agreement, ██ black smoke on disagreement
 8. **Summarize** — a final structured verdict with confidence level and full audit trail
 
@@ -142,7 +142,7 @@ conclave run \
 - **Adversarial deliberation** — models argue FOR and AGAINST, not just answer in parallel
 - **Live progress** — see every round, every model thinking, every agree/disagree in real-time
 - **Model-agnostic** — works with OpenAI API, Ollama, Claude/Codex/Gemini CLIs, or any OpenAI-compatible endpoint (vLLM, LM Studio)
-- **Panel voting** — optional multi-critic panel with weighted agreement ratios for high-stakes decisions
+- **Panel escalation** — optional supplemental reviewers can challenge an early agreement and force another repair round before Conclave settles
 - **Simulated annealing** — run N deliberations with different perspectives, keep the best answer
 - **Role overrides** — assign specific models to Reasoner/Critic/Summarizer roles
 - **Domain routing** — automatic query classification with domain-specific evidence retrieval
@@ -200,21 +200,29 @@ planner:
 
 deliberation:
   max_rounds: 5
-  stability_rounds: 2         # stop after 2 consecutive agreements
+  stability_rounds: 2         # stop after 2 repeated unresolved disagreement sets
   model_timeout_seconds: 300
 ```
 
 ### Panel Voting
 
-When the Reasoner and Critic deadlock, a panel of additional models can break the tie:
+When the Reasoner and Critic need extra pressure, a panel of additional models can verify the current draft, reopen shaky agreement, and feed objections back into the next round:
 
 ```yaml
 deliberation:
   panel:
     enabled: true
+    review_on_agreement: true  # challenge early agreement before settling
+    escalate_after_round: 1    # start panel review after critic round 1
     model_ids: [openai:gpt-4o, cli:gemini, ollama:qwen2.5:7b]
     min_agree_ratio: 0.6      # 60% of panelists must agree
-    max_rounds: 2
+    max_rounds: 2             # number of rounds with supplemental panel review
+```
+
+For one-off high-stakes runs, use:
+
+```bash
+conclave run --query "Should we sign this vendor?" --important --progress
 ```
 
 ### Environment Variables

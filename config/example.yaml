@@ -44,15 +44,17 @@ planner:
 # Deliberation settings
 deliberation:
   max_rounds: 5               # max back-and-forth rounds
-  stability_rounds: 2         # stop after 2 consecutive agreements
+  stability_rounds: 2         # stop after 2 repeated unresolved disagreement sets
   model_timeout_seconds: 120  # per-model call timeout
 
-  # Panel: optional tiebreaker when reasoner and critic disagree
+  # Panel: supplemental verification that can reopen an early agreement
   panel:
     enabled: false
+    # review_on_agreement: true   # challenge "white smoke" before settling
+    # escalate_after_round: 1     # start panel review after this critic round
     # model_ids: [cli:gemini]
     # include_plan_models: false
-    # max_rounds: 1
+    # max_rounds: 2
 
 # Simulated annealing — run N deliberations with decreasing randomness,
 # keep the best. Great for subjective queries where you want diverse

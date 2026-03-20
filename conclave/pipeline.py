@@ -94,6 +94,18 @@ class ConclavePipeline:
         self._vision_usage: Dict[str, int] = {}
         self.logger = logging.getLogger(__name__)
 
+    def _importance_level(self) -> str:
+        meta = getattr(self, "_run_meta", {}) or {}
+        raw = str(meta.get("importance") or meta.get("priority") or "").strip().lower()
+        if raw in {"critical", "high", "important"}:
+            return "high"
+        if raw in {"low"}:
+            return "low"
+        return "normal"
+
+    def _is_high_importance(self) -> bool:
+        return self._importance_level() == "high"
+
     def preflight_check(self) -> Dict[str, Any]:
         """Quick health check of all services. Returns status dict with warnings."""
         warnings: list[str] = []
@@ -1582,7 +1594,7 @@ class ConclavePipeline:
     ) -> Dict[str, Any]:
         cfg = self.config.raw.get("annealing", {}) or {}
         # Anneal only when explicitly requested via --anneal flag or config enabled
-        anneal_requested = bool(getattr(self, "_run_meta", {}).get("anneal"))
+        anneal_requested = bool(getattr(self, "_run_meta", {}).get("anneal")) or self._is_high_importance()
         if not anneal_requested and not cfg.get("enabled", False):
             deliberation = deliberate(self, query, context, route)
             return {

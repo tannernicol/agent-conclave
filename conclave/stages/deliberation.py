@@ -32,6 +32,22 @@ def _effective_min_time_left_seconds(configured_seconds: Any, run_timeout_second
     return max(0.0, min(configured, short_run_cap))
 
 
+def _merge_disagreements(*groups: List[str], limit: int | None = None) -> List[str]:
+    merged: List[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or []:
+            text = str(item).strip()
+            norm = " ".join(text.lower().split())
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            merged.append(text)
+            if limit is not None and len(merged) >= limit:
+                return merged
+    return merged
+
+
 def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
     plan = route.get("plan", {})
     reasoner_model = plan.get("creator") or plan.get("reasoner") or next(iter(plan.values()), None)
@@ -47,11 +63,16 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
     model_timeout = config.get("model_timeout_seconds")
     panel_cfg = config.get("panel", {}) if isinstance(config, dict) else {}
     panel_enabled = bool(panel_cfg.get("enabled", False))
+    panel_review_on_agreement = bool(panel_cfg.get("review_on_agreement", False))
     panel_models = list(route.get("panel_models") or [])
     panel_require_all = bool(panel_cfg.get("require_all", True))
     panel_min_ratio = panel_cfg.get("min_agree_ratio") if isinstance(panel_cfg, dict) else None
     panel_timeout = panel_cfg.get("timeout_seconds") if isinstance(panel_cfg, dict) else None
     panel_max_rounds = panel_cfg.get("max_rounds") if isinstance(panel_cfg, dict) else None
+    try:
+        panel_start_round = max(1, int(panel_cfg.get("escalate_after_round", 1)))
+    except Exception:
+        panel_start_round = 1
     priority_models = pipeline._priority_models(config)
     priority_require_all = bool(config.get("priority_require_all", True))
     priority_min_ratio = config.get("priority_min_ratio")
@@ -62,6 +83,9 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
             panel_min_ratio = float(route.get("panel_min_ratio"))
         except Exception:
             pass
+    if getattr(pipeline, "_is_high_importance", None) and pipeline._is_high_importance():
+        panel_enabled = panel_enabled or bool(panel_models)
+        panel_review_on_agreement = True
     min_time_left = _effective_min_time_left_seconds(
         config.get("min_time_left_seconds", 0),
         pipeline.config.run_timeout_seconds,
@@ -87,13 +111,15 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
     diversity_calls = 0
     reasoner_out = ""
     critic_out = ""
+    review_out = ""
     agreement = False
     required_set = set(pipeline._required_model_ids())
     stable_signature = ""
     stable_count = 0
     stop_reason: str | None = None
     previous_disagreements: List[str] = []
-    final_disagreements: List[str] = []
+    open_disagreements: List[str] = []
+    all_disagreements: List[str] = []
 
     def _emit_deliberate(payload: Dict[str, Any]) -> None:
         if pipeline._run_id:
@@ -121,7 +147,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
         )
         if round_idx > 1:
             draft_excerpt = pipeline._truncate_text(reasoner_out, max_draft_chars)
-            critic_excerpt = pipeline._truncate_text(critic_out, max_feedback_chars)
+            critic_excerpt = pipeline._truncate_text(review_out or critic_out, max_feedback_chars)
             unresolved = previous_disagreements[:max_disagreements]
             unresolved_blob = ""
             if unresolved:
@@ -216,13 +242,74 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                 f"{pipeline._truncate_text(prev_answer, 800)}\n"
                 "Ensure the draft reconciles with prior results and clearly justifies any changes.\n"
             )
-        use_panel = panel_enabled and panel_models
-        if panel_max_rounds is not None:
+        _emit_deliberate({
+            "status": "critic_start",
+            "round": round_idx,
+            "max_rounds": max_rounds,
+            "role": "critic",
+            "model_id": critic_model,
+            "model_label": pipeline._model_label(critic_model) if critic_model else None,
+            "timeout_s": per_call_timeout,
+        })
+        critic_start = time.perf_counter()
+        critic_out = pipeline._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)
+        critic_duration = time.perf_counter() - critic_start
+        critic_agreement = pipeline._critic_agrees(critic_out)
+        critic_disagreements = pipeline._extract_disagreements(critic_out)
+        _emit_deliberate({
+            "status": "critic_done",
+            "round": round_idx,
+            "max_rounds": max_rounds,
+            "role": "critic",
+            "model_id": critic_model,
+            "model_label": pipeline._model_label(critic_model) if critic_model else None,
+            "duration_s": round(critic_duration, 2),
+            "verdict": "agree" if critic_agreement else "disagree",
+            "summary": _summary_line(critic_out),
+        })
+
+        agreement = critic_agreement
+        panel_agreement = None
+        weighted_ratio = None
+        round_disagreements = list(critic_disagreements)
+        review_out = critic_out
+
+        panel_window_open = panel_enabled and bool(panel_models) and round_idx >= panel_start_round
+        if panel_window_open and panel_max_rounds is not None:
             try:
-                use_panel = use_panel and (round_idx <= int(panel_max_rounds))
+                panel_window_open = round_idx < (panel_start_round + int(panel_max_rounds))
             except Exception:
                 pass
-        if use_panel:
+        should_run_panel = bool(panel_window_open and (not critic_agreement or panel_review_on_agreement))
+
+        if should_run_panel:
+            panel_prompt = (
+                "You are a panel reviewer. Read the reasoner's draft and the critic's review.\n"
+                "Decide whether this answer is ready to ship without human arbitration.\n"
+                "Only raise new disagreements if they are material and would change the outcome.\n"
+                "If the critic's objections are resolved or non-blocking, respond with AGREE.\n"
+                "List at most 3 disagreements and at most 3 follow-ups.\n"
+                "Return sections:\nDisagreements:\n- ...\nFollow-ups:\n- ...\nVerdict:\nAGREE or DISAGREE\n\n"
+                f"Question: {query}\n\nRuntime:\n{runtime_blob}\n\nReasoner draft:\n{reasoner_out}\n\nCritic review:\n{critic_out}\n"
+            )
+            if round_idx > 1 and previous_disagreements:
+                panel_prompt += "\nPrevious disagreements (only keep unresolved ones):\n"
+                for item in previous_disagreements[:max_disagreements]:
+                    panel_prompt += f"- {item}\n"
+            if domain_instructions or instructions or output_instructions or tool_guard:
+                panel_prompt += f"\n{domain_instructions}\n"
+                panel_prompt += f"\n{tool_guard}\n"
+                if output_instructions:
+                    panel_prompt += f"\n{output_instructions}\n"
+                if instructions:
+                    panel_prompt += f"Instructions from input:\n{instructions}\n"
+            if prev_answer:
+                panel_prompt += (
+                    "\nPrevious consensus (Version N-1):\n"
+                    f"{pipeline._truncate_text(prev_answer, 800)}\n"
+                    "Prefer stability unless the current draft has a materially better justification.\n"
+                )
+
             panel_reviews = []
             next_panel_models = []
             for model_id in panel_models:
@@ -242,7 +329,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                     "timeout_s": effective_panel_timeout,
                 })
                 panel_start = time.perf_counter()
-                review = pipeline._call_model(model_id, critic_prompt, role="critic_panel", timeout_seconds=effective_panel_timeout)
+                review = pipeline._call_model(model_id, panel_prompt, role="critic_panel", timeout_seconds=effective_panel_timeout)
                 panel_duration = time.perf_counter() - panel_start
                 meta = pipeline._last_model_results.get(model_id, {})
                 ok = meta.get("ok", True)
@@ -282,7 +369,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                     next_panel_models.append(model_id)
             if next_panel_models != panel_models:
                 panel_models = next_panel_models
-            agreement = pipeline._panel_agreement(
+            panel_agreement = pipeline._panel_agreement(
                 panel_reviews,
                 require_all=panel_require_all,
                 min_ratio=None,
@@ -292,7 +379,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
             )
             if panel_min_ratio is not None and not panel_require_all:
                 try:
-                    agreement = pipeline._panel_agreement(
+                    panel_agreement = pipeline._panel_agreement(
                         panel_reviews,
                         require_all=False,
                         min_ratio=float(panel_min_ratio),
@@ -301,7 +388,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                         priority_min_ratio=priority_min_ratio,
                     )
                 except Exception:
-                    agreement = pipeline._panel_agreement(
+                    panel_agreement = pipeline._panel_agreement(
                         panel_reviews,
                         require_all=panel_require_all,
                         min_ratio=None,
@@ -309,12 +396,17 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                         priority_require_all=priority_require_all,
                         priority_min_ratio=priority_min_ratio,
                     )
-            critic_out = pipeline._format_panel_feedback(panel_reviews, max_disagreements=max_disagreements)
+            panel_feedback = pipeline._format_panel_feedback(panel_reviews, max_disagreements=max_disagreements)
+            review_out = f"{critic_out}\n\n{panel_feedback}".strip()
             filtered_disagreements = pipeline._aggregate_panel_disagreements(
                 panel_reviews,
                 priority_models=priority_models,
             )
-            # Calculate weighted agreement ratio for transparency
+            round_disagreements = _merge_disagreements(
+                critic_disagreements,
+                filtered_disagreements,
+                limit=max_disagreements,
+            )
             weighted_agrees = sum(
                 pipeline._model_confidence_weight(r.get("model_id", ""))
                 for r in panel_reviews if r.get("verdict") == "agree" and r.get("ok", True)
@@ -324,78 +416,51 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                 for r in panel_reviews if r.get("ok", True)
             )
             weighted_ratio = round(weighted_agrees / total_weight, 3) if total_weight > 0 else 0.0
-
-            round_entry = {
-                "round": round_idx,
-                "agreement": agreement,
-                "disagreements": filtered_disagreements,
-                "weighted_ratio": weighted_ratio,
-            }
+            agreement = bool(critic_agreement and panel_agreement)
             panel_rounds.append({
                 "round": round_idx,
                 "agreement": agreement,
+                "critic_agreement": critic_agreement,
+                "panel_agreement": panel_agreement,
                 "weighted_ratio": weighted_ratio,
                 "reviews": panel_reviews,
             })
-            rounds.append(round_entry)
-        else:
-            _emit_deliberate({
-                "status": "critic_start",
-                "round": round_idx,
-                "max_rounds": max_rounds,
-                "role": "critic",
-                "model_id": critic_model,
-                "model_label": pipeline._model_label(critic_model) if critic_model else None,
-                "timeout_s": per_call_timeout,
-            })
-            critic_start = time.perf_counter()
-            critic_out = pipeline._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)
-            critic_duration = time.perf_counter() - critic_start
-            agreement = pipeline._critic_agrees(critic_out)
-            _emit_deliberate({
-                "status": "critic_done",
-                "round": round_idx,
-                "max_rounds": max_rounds,
-                "role": "critic",
-                "model_id": critic_model,
-                "model_label": pipeline._model_label(critic_model) if critic_model else None,
-                "duration_s": round(critic_duration, 2),
-                "verdict": "agree" if agreement else "disagree",
-                "summary": _summary_line(critic_out),
-            })
-            round_entry = {
-                "round": round_idx,
-                "agreement": agreement,
-                "disagreements": pipeline._extract_disagreements(critic_out),
-            }
-            rounds.append(round_entry)
-            diversity_entry = pipeline._maybe_run_diversity_check(
-                query=query,
-                context_blob=context_blob,
-                reasoner_out=reasoner_out,
-                critic_out=critic_out,
-                round_idx=round_idx,
-                max_rounds=max_rounds,
-                agreement=agreement,
-                domain_instructions=domain_instructions,
-                output_instructions=output_instructions,
-                instructions=instructions,
-                calls_so_far=diversity_calls,
-            )
-            if diversity_entry:
-                diversity_checks.append(diversity_entry)
-                diversity_calls += 1
+
+        round_entry = {
+            "round": round_idx,
+            "agreement": agreement,
+            "critic_agreement": critic_agreement,
+            "disagreements": round_disagreements,
+        }
+        if panel_agreement is not None:
+            round_entry["panel_agreement"] = panel_agreement
+        if weighted_ratio is not None:
+            round_entry["weighted_ratio"] = weighted_ratio
+        rounds.append(round_entry)
+        diversity_entry = pipeline._maybe_run_diversity_check(
+            query=query,
+            context_blob=context_blob,
+            reasoner_out=reasoner_out,
+            critic_out=review_out or critic_out,
+            round_idx=round_idx,
+            max_rounds=max_rounds,
+            agreement=agreement,
+            domain_instructions=domain_instructions,
+            output_instructions=output_instructions,
+            instructions=instructions,
+            calls_so_far=diversity_calls,
+        )
+        if diversity_entry:
+            diversity_checks.append(diversity_entry)
+            diversity_calls += 1
         _emit_deliberate({"status": "round_result", **round_entry})
         previous_disagreements = list(round_entry.get("disagreements") or [])
         round_disagreements = list(round_entry.get("disagreements") or [])
         if round_disagreements:
-            # Preserve a cumulative, de-duped disagreement list for downstream summaries.
-            combined = final_disagreements + round_disagreements
-            seen = []
-            for item in combined:
-                if item not in seen:
-                    seen.append(item)
-            final_disagreements = seen
+            open_disagreements = list(round_disagreements)
+            all_disagreements = _merge_disagreements(all_disagreements, round_disagreements)
+        else:
+            open_disagreements = []
         signature = pipeline._disagreement_signature(round_entry.get("disagreements") or [])
         if stop_on_repeat and stability_rounds > 0 and signature:
             if signature == stable_signature:
@@ -428,7 +493,8 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
     result = {
         "reasoner": reasoner_out,
         "critic": critic_out,
-        "disagreements": final_disagreements,
+        "disagreements": open_disagreements,
+        "all_disagreements": all_disagreements,
         "rounds": rounds,
         "agreement": agreement,
         "stopped_reason": stop_reason,

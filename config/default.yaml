@@ -559,6 +559,8 @@ deliberation:
     max_disagreements: 6
   panel:
     enabled: true
+    review_on_agreement: true
+    escalate_after_round: 1
     filter_unavailable: true
     ping_timeout_seconds: 30
     timeout_seconds: 90

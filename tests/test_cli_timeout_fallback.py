@@ -5,7 +5,7 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
-from conclave.cli import _execute_run
+from conclave.cli import _build_meta, _execute_run
 from conclave.config import Config
 from conclave.pipeline import ConclavePipeline, PipelineResult, RequiredModelError
 
@@ -51,6 +51,25 @@ def test_execute_run_uses_pipeline_timeout_override():
 
     assert result.run_id == "run-123"
     assert pipeline.seen_timeout == 17
+
+
+def test_build_meta_marks_high_importance():
+    args = Namespace(
+        input_file=None,
+        output_type=None,
+        max_evidence=None,
+        max_context_chars=None,
+        token_budget_total=None,
+        token_budget_remaining=None,
+        token_budget_used=None,
+        important=True,
+        importance=None,
+        anneal=False,
+    )
+
+    meta = _build_meta(args)
+
+    assert meta == {"source": "cli", "importance": "high"}
 
 
 def test_call_cli_model_clamps_timeout_to_remaining_time(tmp_path: Path):
