@@ -2185,6 +2185,7 @@ class ConclavePipeline:
 
     def _critic_agrees(self, critic: str) -> bool:
         lower = critic.lower()
+        has_disagree_word = re.search(r"\bdisagree(?:d)?\b", lower) is not None
         lines = [line.strip() for line in critic.splitlines() if line.strip()]
         for idx, line in enumerate(lines):
             lower_line = line.lower()
@@ -2217,7 +2218,20 @@ class ConclavePipeline:
                 return True
             if lower_line in {"disagree", "disagreed"}:
                 return False
-        return "verdict" in lower and "agree" in lower and "disagree" not in lower
+        if any(
+            phrase in lower
+            for phrase in (
+                "all prior disagreements are resolved",
+                "all disagreements are resolved",
+                "no disagreements remain",
+                "no remaining disagreements",
+                "disagreements: none remaining",
+                "disagreements: none remain",
+                "disagreements: none",
+            )
+        ) and not has_disagree_word:
+            return True
+        return "verdict" in lower and "agree" in lower and not has_disagree_word
 
     def _summarize(self, query: str, context: Dict[str, Any], deliberation: Dict[str, Any], route: Dict[str, Any], quality: Dict[str, Any]) -> Dict[str, Any]:
         plan = route.get("plan", {})

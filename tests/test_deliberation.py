@@ -4,7 +4,12 @@ import tempfile
 
 from conclave.config import Config, get_config
 from conclave.pipeline import ConclavePipeline
-from conclave.stages.deliberation import _bounded_timeout_seconds, _effective_min_time_left_seconds, deliberate
+from conclave.stages.deliberation import (
+    _bounded_timeout_seconds,
+    _effective_min_time_left_seconds,
+    _filter_open_disagreements,
+    deliberate,
+)
 
 
 class DeliberationTests(unittest.TestCase):
@@ -14,6 +19,11 @@ class DeliberationTests(unittest.TestCase):
         self.assertFalse(pipeline._critic_agrees("Verdict: DISAGREE"))
         self.assertTrue(pipeline._critic_agrees("Verdict\nAGREE"))
         self.assertFalse(pipeline._critic_agrees("Verdict - Disagree"))
+        self.assertTrue(
+            pipeline._critic_agrees(
+                "All prior disagreements are resolved.\n\nDisagreements: None remaining."
+            )
+        )
 
     def test_bounded_timeout_respects_remaining_budget(self):
         self.assertEqual(_bounded_timeout_seconds(300, 11.8), 11)
@@ -24,6 +34,14 @@ class DeliberationTests(unittest.TestCase):
         self.assertEqual(_effective_min_time_left_seconds(150, 180), 45.0)
         self.assertEqual(_effective_min_time_left_seconds(150, 900), 150.0)
         self.assertEqual(_effective_min_time_left_seconds(0, 180), 0.0)
+
+    def test_filter_open_disagreements_ignores_resolved_markers(self):
+        items = [
+            "**Portability gap** -> **RESOLVED.**",
+            "None remaining.",
+            "Need rollback coverage before ship.",
+        ]
+        self.assertEqual(_filter_open_disagreements(items), ["Need rollback coverage before ship."])
 
     def test_panel_escalation_reopens_round_after_critic_agrees(self):
         with tempfile.TemporaryDirectory() as tmpdir:

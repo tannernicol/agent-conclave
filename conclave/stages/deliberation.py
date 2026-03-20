@@ -48,6 +48,41 @@ def _merge_disagreements(*groups: List[str], limit: int | None = None) -> List[s
     return merged
 
 
+def _looks_resolved_disagreement(text: str) -> bool:
+    lower = " ".join(str(text).strip().lower().split())
+    if not lower:
+        return True
+    if any(
+        token in lower
+        for token in (
+            "all prior disagreements are resolved",
+            "all disagreements are resolved",
+            "none remaining",
+            "no disagreements remain",
+            "no remaining disagreements",
+        )
+    ):
+        return True
+    if "resolved" in lower and not any(
+        token in lower
+        for token in (
+            "unresolved",
+            "not resolved",
+            "not yet resolved",
+            "not fully resolved",
+            "partially resolved",
+            "remains unresolved",
+            "still unresolved",
+        )
+    ):
+        return True
+    return False
+
+
+def _filter_open_disagreements(items: List[str]) -> List[str]:
+    return [item for item in items or [] if not _looks_resolved_disagreement(item)]
+
+
 def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, Any]) -> Dict[str, Any]:
     plan = route.get("plan", {})
     reasoner_model = plan.get("creator") or plan.get("reasoner") or next(iter(plan.values()), None)
@@ -255,7 +290,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
         critic_out = pipeline._call_model(critic_model, critic_prompt, role="critic", timeout_seconds=per_call_timeout)
         critic_duration = time.perf_counter() - critic_start
         critic_agreement = pipeline._critic_agrees(critic_out)
-        critic_disagreements = pipeline._extract_disagreements(critic_out)
+        critic_disagreements = _filter_open_disagreements(pipeline._extract_disagreements(critic_out))
         _emit_deliberate({
             "status": "critic_done",
             "round": round_idx,
@@ -398,10 +433,10 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
                     )
             panel_feedback = pipeline._format_panel_feedback(panel_reviews, max_disagreements=max_disagreements)
             review_out = f"{critic_out}\n\n{panel_feedback}".strip()
-            filtered_disagreements = pipeline._aggregate_panel_disagreements(
+            filtered_disagreements = _filter_open_disagreements(pipeline._aggregate_panel_disagreements(
                 panel_reviews,
                 priority_models=priority_models,
-            )
+            ))
             round_disagreements = _merge_disagreements(
                 critic_disagreements,
                 filtered_disagreements,
@@ -455,7 +490,7 @@ def deliberate(pipeline, query: str, context: Dict[str, Any], route: Dict[str, A
             diversity_calls += 1
         _emit_deliberate({"status": "round_result", **round_entry})
         previous_disagreements = list(round_entry.get("disagreements") or [])
-        round_disagreements = list(round_entry.get("disagreements") or [])
+        round_disagreements = _filter_open_disagreements(list(round_entry.get("disagreements") or []))
         if round_disagreements:
             open_disagreements = list(round_disagreements)
             all_disagreements = _merge_disagreements(all_disagreements, round_disagreements)
